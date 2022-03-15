@@ -10,6 +10,11 @@ import singer.metrics as metrics
 from singer import metadata
 from singer import utils
 
+import tracemalloc
+# import linecache
+# import logging
+# import os
+
 LOGGER = singer.get_logger('tap_snowflake')
 
 def escape(string):
@@ -186,9 +191,17 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
     time_extracted = utils.now()
 
     LOGGER.info('Running %s', select_sql)
-    cursor.execute(select_sql, params)
 
-    row = cursor.fetchone()
+    # for logger_name in ['snowflake.connector']:
+    #     logger = logging.getLogger(logger_name)
+    #     logger.setLevel(logging.DEBUG)
+    #     ch = logging.FileHandler('./debugoutput.txt')
+    #     ch.setLevel(logging.DEBUG)
+    #     ch.setFormatter(logging.Formatter('%(asctime)s - %(threadName)s %(filename)s:%(lineno)d - %(funcName)s() - %(levelname)s - %(message)s'))
+    #     logger.addHandler(ch)
+
+    cursor.execute(select_sql, params)
+    # row = cursor.fetchone()
     rows_saved = 0
 
     database_name = get_database_name(catalog_entry)
@@ -197,7 +210,9 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
         counter.tags['database'] = database_name
         counter.tags['table'] = catalog_entry.table
 
-        while row:
+        tracemalloc.start()
+        oldPeak = 0
+        for row in cursor:
             counter.increment()
             rows_saved += 1
             record_message = row_to_singer_record(catalog_entry,
@@ -205,7 +220,22 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
                                                   row,
                                                   columns,
                                                   time_extracted)
+            curr, peak = tracemalloc.get_traced_memory()
+            if peak > oldPeak:
+                oldPeak = peak
+                LOGGER.info(f'MJD--- After {rows_saved} rows saved, getting record message: Current memory: {curr}, Peak: {peak}')
+            #     if rows_saved > 5000:
+            #         snapshot = tracemalloc.take_snapshot()
+            #         top_stats = snapshot.statistics('lineno')
+            #         stat = top_stats[0]
+            #         frame = stat.traceback[0]
+            #         LOGGER.info("%s:%s: %.1f KiB"
+            #             % (frame.filename, frame.lineno, stat.size / 1024))
             singer.write_message(record_message)
+            # curr, peak = tracemalloc.get_traced_memory()
+            # if peak > oldPeak:
+            #     oldPeak = peak
+            #     LOGGER.info(f'MJD--- After {rows_saved} rows saved , writing message: Current memory: {curr}, Peak: {peak}')
 
             md_map = metadata.to_map(catalog_entry.metadata)
             stream_metadata = md_map.get((), {})
@@ -241,6 +271,10 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
             if rows_saved % 1000 == 0:
                 singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
-            row = cursor.fetchone()
+            # #row = cursor.fetchone()
+            # curr, peak = tracemalloc.get_traced_memory()
+            # if peak > oldPeak:
+            #     oldPeak = peak
+            #     LOGGER.info(f'MJD--- After {rows_saved} rows saved : Current memory: {curr}, Peak: {peak}')
 
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))

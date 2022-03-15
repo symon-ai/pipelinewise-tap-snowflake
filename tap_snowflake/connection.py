@@ -73,7 +73,8 @@ class SnowflakeConnection:
             role=self.connection_config.get('role'),  # optional parameter
             database=self.connection_config['dbname'],
             warehouse=self.connection_config['warehouse'],
-            insecure_mode=self.connection_config.get('insecure_mode', False)
+            insecure_mode=self.connection_config.get('insecure_mode', False),
+            client_prefetch_threads=1
             # Use insecure mode to avoid "Failed to get OCSP response" warnings
             # insecure_mode=True
         )

@@ -249,7 +249,7 @@ class TestTypeMapping(unittest.TestCase):
                 row = cur.fetchone()
 
                 # Convert the exported data to singer JSON
-                record_message = common.row_to_singer_record(catalog_entry=catalog_entry,
+                record_message = common.row_to_singer_record2(catalog_entry=catalog_entry,
                                                              version=1,
                                                              row=row,
                                                              columns=columns,

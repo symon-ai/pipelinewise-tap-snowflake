@@ -496,7 +496,35 @@ def main_impl():
     elif args.properties:
         catalog = Catalog.from_dict(args.properties)
         state = args.state or {}
-        do_sync(snowflake_conn, args.config, catalog, state)
+        if args.config.get('profile_execution', False):
+            LOGGER.info(f'Executing with profiling enabled based on *profile_execution* config parameter')
+            import cProfile
+            pr = cProfile.Profile()
+            pr.enable()
+            do_sync(snowflake_conn, args.config, catalog, state)
+            pr.disable()
+            pr.dump_stats('output.dat')
+
+            import pstats
+            from pstats import SortKey
+
+            import time
+
+            time_str = time.strftime("%Y%m%d-%H%M%S")
+
+            with open(f'output_time_{time_str}.txt', 'w') as f:
+                p = pstats.Stats("output.dat", stream=f)
+                p.sort_stats("time").print_stats()
+                LOGGER.info(f'Execution profile written to {f.name}')
+
+            with open(f'output_calls_{time_str}.txt', 'w') as f:
+                p = pstats.Stats("output.dat", stream=f)
+                p.sort_stats("calls").print_stats()
+                LOGGER.info(f'Execution profile written to {f.name}')
+
+        else:
+            do_sync(snowflake_conn, args.config, catalog, state)
+
     else:
         LOGGER.info('No properties were selected')
 
@@ -507,5 +535,8 @@ def main():
     except Exception as exc:
         LOGGER.critical(exc)
         raise exc
+
+
 if __name__ == '__main__':
     main()
+

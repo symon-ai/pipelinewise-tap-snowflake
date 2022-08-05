@@ -3,9 +3,9 @@
 
 import copy
 import datetime
-import singer
 import time
 
+import singer
 import singer.metrics as metrics
 from singer import metadata
 from singer import utils
@@ -168,6 +168,56 @@ def row_to_singer_record(catalog_entry, version, row, columns, time_extracted):
         time_extracted=time_extracted)
 
 
+def row_to_singer_record2(catalog_entry, version, row, columns, time_extracted):
+    """Transform SQL row to singer compatible record message"""
+    rec = dict.fromkeys(columns)
+    for idx, elem in enumerate(row):
+        property_type = catalog_entry.schema.properties[columns[idx]].type
+        column = columns[idx]
+
+        if isinstance(elem, str):
+            rec[column] = elem
+
+        elif isinstance(elem, datetime.datetime):
+            rec[column] = elem.isoformat() + '+00:00'
+
+        elif isinstance(elem, datetime.date):
+            rec[column] = elem.isoformat() + 'T00:00:00+00:00'
+
+        elif isinstance(elem, datetime.timedelta):
+            epoch = datetime.datetime.utcfromtimestamp(0)
+            timedelta_from_epoch = epoch + elem
+            rec[column] = timedelta_from_epoch.isoformat() + '+00:00'
+
+        elif isinstance(elem, datetime.time):
+            rec[column] = str(elem)
+
+        elif isinstance(elem, bytes):
+            # for BIT value, treat 0 as False and anything else as True
+            if 'boolean' in property_type:
+                boolean_representation = elem != b'\x00'
+                rec[column] = boolean_representation
+            else:
+                rec[column] = elem.hex()
+
+        elif 'boolean' in property_type or property_type == 'boolean':
+            if elem is None:
+                boolean_representation = None
+            elif elem == 0:
+                boolean_representation = False
+            else:
+                boolean_representation = True
+            rec[column] = boolean_representation
+
+        else:
+            rec[column] = elem
+
+    return singer.RecordMessage(
+        stream=catalog_entry.stream,
+        record=rec,
+        version=version,
+        time_extracted=time_extracted)
+
 def whitelist_bookmark_keys(bookmark_key_set, tap_stream_id, state):
     """..."""
     for bookmark_key in [non_whitelisted_bookmark_key
@@ -197,49 +247,53 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
         counter.tags['database'] = database_name
         counter.tags['table'] = catalog_entry.table
 
+        md_map = metadata.to_map(catalog_entry.metadata)
+        stream_metadata = md_map.get((), {})
+        replication_method = stream_metadata.get('replication-method')
+
+        key_properties = get_key_properties(catalog_entry)
+
         while row:
             counter.increment()
             rows_saved += 1
-            record_message = row_to_singer_record(catalog_entry,
-                                                  stream_version,
-                                                  row,
-                                                  columns,
-                                                  time_extracted)
+            record_message = row_to_singer_record2(catalog_entry,
+                                                   stream_version,
+                                                   row,
+                                                   columns,
+                                                   time_extracted)
             singer.write_message(record_message)
 
-            md_map = metadata.to_map(catalog_entry.metadata)
-            stream_metadata = md_map.get((), {})
-            replication_method = stream_metadata.get('replication-method')
-
-            if replication_method == 'FULL_TABLE':
-                key_properties = get_key_properties(catalog_entry)
-
-                max_pk_values = singer.get_bookmark(state,
-                                                    catalog_entry.tap_stream_id,
-                                                    'max_pk_values')
-
-                if max_pk_values:
-                    last_pk_fetched = {k:v for k, v in record_message.record.items()
-                                       if k in key_properties}
-
-                    state = singer.write_bookmark(state,
-                                                  catalog_entry.tap_stream_id,
-                                                  'last_pk_fetched',
-                                                  last_pk_fetched)
-
-            elif replication_method == 'INCREMENTAL':
-                if replication_key is not None:
-                    state = singer.write_bookmark(state,
-                                                  catalog_entry.tap_stream_id,
-                                                  'replication_key',
-                                                  replication_key)
-
-                    state = singer.write_bookmark(state,
-                                                  catalog_entry.tap_stream_id,
-                                                  'replication_key_value',
-                                                  record_message.record[replication_key])
-            if rows_saved % 1000 == 0:
-                singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
+            # Jeff McMahon - Aug, 2022
+            # Symon does not support incremental updates - therefore we do not need to emit STATE
+            # When we revisit incremental updates in Symon we should revisit the following code.
+            # if replication_method == 'FULL_TABLE':
+            #
+            #     max_pk_values = singer.get_bookmark(state,
+            #                                         catalog_entry.tap_stream_id,
+            #                                         'max_pk_values')
+            #
+            #     if max_pk_values:
+            #         last_pk_fetched = {k: v for k, v in record_message.record.items()
+            #                            if k in key_properties}
+            #
+            #         state = singer.write_bookmark(state,
+            #                                       catalog_entry.tap_stream_id,
+            #                                       'last_pk_fetched',
+            #                                       last_pk_fetched)
+            #
+            # elif replication_method == 'INCREMENTAL':
+            #     if replication_key is not None:
+            #         state = singer.write_bookmark(state,
+            #                                       catalog_entry.tap_stream_id,
+            #                                       'replication_key',
+            #                                       replication_key)
+            #
+            #         state = singer.write_bookmark(state,
+            #                                       catalog_entry.tap_stream_id,
+            #                                       'replication_key_value',
+            #                                       record_message.record[replication_key])
+            # if rows_saved % 1000 == 0:
+            #     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
             row = cursor.fetchone()
 

@@ -24,7 +24,7 @@ setup(name='pipelinewise-tap-snowflake',
           'setuptools>=40.8.0',
           'wheel>=0.37.0',
           'pyOpenSSL==22.0.0',
-          'cryptography>=35.0,<37.0.0'
+          'cryptography>=35.0,<39.0.0'
       ],
       extras_require={
           'test': [

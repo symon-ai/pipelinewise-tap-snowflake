@@ -16,14 +16,27 @@ If you want to run this [Singer Tap](https://singer.io) independently please rea
 
 ### Install and Run
 
-First, make sure Python 3 is installed on your system or follow these
-installation instructions for [Mac](http://docs.python-guide.org/en/latest/starting/install3/osx/) or
-[Ubuntu](https://www.digitalocean.com/community/tutorials/how-to-install-python-3-and-set-up-a-local-programming-environment-on-ubuntu-16-04).
+Ensure poetry is installed on your machine. 
 
-It's recommended to use a virtualenv:
+- This command will return the installed version of poetry if it is installed.
+```
+poetry --version
+```
 
-```bash
-make venv
+- If not, install poetry using the following commands (from https://python-poetry.org/docs/#installation):
+```
+curl -sSL https://install.python-poetry.org | python3 -
+PATH=~/.local/bin:$PATH
+```
+
+Within the `pipelinewise-tap-snowflake` directory, install dependencies:
+```
+poetry install
+```
+
+Then run the tap:
+```
+poetry run tap-snowflake <options>
 ```
 
 ### Configuration

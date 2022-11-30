@@ -4,6 +4,7 @@
 import copy
 import datetime
 import time
+from decimal import Decimal
 
 import singer
 import singer.metrics as metrics
@@ -199,6 +200,9 @@ def row_to_singer_record2(catalog_entry, version, row, columns, time_extracted):
                 rec[column] = boolean_representation
             else:
                 rec[column] = elem.hex()
+        
+        elif isinstance(elem, Decimal):
+            rec[column] = float(elem)
 
         elif 'boolean' in property_type or property_type == 'boolean':
             if elem is None:

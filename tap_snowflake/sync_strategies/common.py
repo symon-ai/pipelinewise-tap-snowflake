@@ -4,6 +4,7 @@
 import copy
 import datetime
 import time
+from decimal import Decimal
 
 import singer
 import singer.metrics as metrics
@@ -147,6 +148,10 @@ def row_to_singer_record(catalog_entry, version, row, columns, time_extracted):
                 row_to_persist += (boolean_representation,)
             else:
                 row_to_persist += (elem.hex(),)
+        
+        # orjson is used when writing singer record and it does not recognize Decimal type
+        elif isinstance(elem, Decimal):
+            row_to_persist += (float(elem),)
 
         elif 'boolean' in property_type or property_type == 'boolean':
             if elem is None:
@@ -199,6 +204,10 @@ def row_to_singer_record2(catalog_entry, version, row, columns, time_extracted):
                 rec[column] = boolean_representation
             else:
                 rec[column] = elem.hex()
+        
+        # orjson is used when writing singer record and it does not recognize Decimal type
+        elif isinstance(elem, Decimal):
+            rec[column] = float(elem)
 
         elif 'boolean' in property_type or property_type == 'boolean':
             if elem is None:

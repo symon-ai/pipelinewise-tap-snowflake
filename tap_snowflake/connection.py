@@ -26,7 +26,8 @@ def retry_pattern():
 def log_backoff_attempt(details):
     """Log backoff attempts used by retry_pattern
     """
-    LOGGER.info('Error detected communicating with Snowflake, triggering backoff: %d try', details.get('tries'))
+    LOGGER.info(
+        'Error detected communicating with Snowflake, triggering backoff: %d try', details.get('tries'))
 
 
 def validate_config(config):
@@ -61,7 +62,8 @@ class SnowflakeConnection:
         if len(config_errors) == 0:
             self.connection_config = connection_config
         else:
-            LOGGER.error('Invalid configuration:\n   * %s', '\n   * '.join(config_errors))
+            LOGGER.error('Invalid configuration:\n   * %s',
+                         '\n   * '.join(config_errors))
             sys.exit(1)
 
     def open_connection(self):
@@ -73,8 +75,10 @@ class SnowflakeConnection:
             role=self.connection_config.get('role'),  # optional parameter
             database=self.connection_config['dbname'],
             warehouse=self.connection_config['warehouse'],
-            client_prefetch_threads=self.connection_config.get('client_prefetch_threads', 4),
-            insecure_mode=self.connection_config.get('insecure_mode', False)
+            client_prefetch_threads=self.connection_config.get(
+                'client_prefetch_threads', 2),
+            insecure_mode=self.connection_config.get('insecure_mode', False),
+            network_timeout=50
             # Use insecure mode to avoid "Failed to get OCSP response" warnings
             # insecure_mode=True
         )

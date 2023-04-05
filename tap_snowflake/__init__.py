@@ -27,7 +27,7 @@ LOGGER = singer.get_logger('tap_snowflake')
 # Max number of rows that a SHOW SCHEMAS|TABLES|COLUMNS can return.
 # If more than this number of rows returned then tap-snowflake will raise TooManyRecordsException
 SHOW_COMMAND_MAX_ROWS = 9999
-MAX_COLS = 20
+MAX_COLS = 150
 
 # Tone down snowflake connector logs noise
 logging.getLogger('snowflake.connector').setLevel(logging.WARNING)

@@ -329,7 +329,7 @@ def resolve_catalog(discovered_catalog, streams_to_sync):
         columns = desired_columns(selected, discovered_table.schema)
 
         if (len(columns) > MAX_COLS):
-            raise Exception(f'Number of columns cannot exceed {MAX_COLS} ')
+            raise Exception(f'Number of columns cannot exceed {MAX_COLS}')
         else:
             LOGGER.info('length of cols: ', len(columns))
 

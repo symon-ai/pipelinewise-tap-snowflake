@@ -27,7 +27,7 @@ LOGGER = singer.get_logger('tap_snowflake')
 # Max number of rows that a SHOW SCHEMAS|TABLES|COLUMNS can return.
 # If more than this number of rows returned then tap-snowflake will raise TooManyRecordsException
 SHOW_COMMAND_MAX_ROWS = 9999
-
+MAX_COLS = 150
 
 # Tone down snowflake connector logs noise
 logging.getLogger('snowflake.connector').setLevel(logging.WARNING)
@@ -55,11 +55,14 @@ REQUIRED_CONFIG_KEYS = [
 STRING_TYPES = set(['varchar', 'char', 'character', 'string', 'text'])
 NUMBER_TYPES = set(['number', 'decimal', 'numeric'])
 INTEGER_TYPES = set(['int', 'integer', 'bigint', 'smallint'])
-FLOAT_TYPES = set(['float', 'float4', 'float8', 'real', 'double', 'double precision'])
-DATETIME_TYPES = set(['datetime', 'timestamp', 'date', 'timestamp_ltz', 'timestamp_ntz', 'timestamp_tz'])
+FLOAT_TYPES = set(['float', 'float4', 'float8', 'real',
+                  'double', 'double precision'])
+DATETIME_TYPES = set(['datetime', 'timestamp', 'date',
+                     'timestamp_ltz', 'timestamp_ntz', 'timestamp_tz'])
 BINARY_TYPE = set(['binary', 'varbinary'])
 SEMI_STRUCTURED_TYPES = set(['variant', 'object', 'array'])
-GEOGRAPHY_TYPE =set(['geography'])
+GEOGRAPHY_TYPE = set(['geography'])
+
 
 def schema_for_column(c):
     '''Returns the Schema object for the given Column.'''
@@ -95,13 +98,13 @@ def schema_for_column(c):
     elif data_type in BINARY_TYPE:
         result.type = ['null', 'string']
         result.format = 'binary'
-        
+
     elif data_type in SEMI_STRUCTURED_TYPES:
-        result.type = ['null', 'string'] 
+        result.type = ['null', 'string']
         result.format = 'semi_structured'
 
     elif data_type in GEOGRAPHY_TYPE:
-        result.type = ['null', 'string'] 
+        result.type = ['null', 'string']
         result.format = 'geography'
 
     else:
@@ -172,7 +175,8 @@ def get_table_columns(snowflake_conn, tables):
         queries.extend([show_columns, select])
 
         # Run everything in one transaction
-        columns = snowflake_conn.query(queries, max_records=SHOW_COMMAND_MAX_ROWS)
+        columns = snowflake_conn.query(
+            queries, max_records=SHOW_COMMAND_MAX_ROWS)
         table_columns.extend(columns)
 
     return table_columns
@@ -230,7 +234,8 @@ def discover_catalog(snowflake_conn, config):
                 table_name in table_info[table_catalog][table_schema]
         ):
             # Row Count of views returns NULL - Transform it to not null integer by defaults to 0
-            row_count = table_info[table_catalog][table_schema][table_name].get('row_count', 0) or 0
+            row_count = table_info[table_catalog][table_schema][table_name].get(
+                'row_count', 0) or 0
             is_view = table_info[table_catalog][table_schema][table_name]['is_view']
 
             md_map = metadata.write(md_map, (), 'row-count', row_count)
@@ -240,7 +245,8 @@ def discover_catalog(snowflake_conn, config):
                 table=table_name,
                 stream=table_name,
                 metadata=metadata.to_list(md_map),
-                tap_stream_id=common.generate_tap_stream_id(table_catalog, table_schema, table_name),
+                tap_stream_id=common.generate_tap_stream_id(
+                    table_catalog, table_schema, table_name),
                 schema=schema)
 
             entries.append(entry)
@@ -294,8 +300,8 @@ def desired_columns(selected, table_schema):
         LOGGER.warning(
             'Columns %s are primary keys but were not selected. Adding them.',
             not_selected_but_automatic)
-            
-    return sorted(selected.intersection(available).union(automatic), key = list(table_schema.properties.keys()).index)
+
+    return sorted(selected.intersection(available).union(automatic), key=list(table_schema.properties.keys()).index)
 
 
 def resolve_catalog(discovered_catalog, streams_to_sync):
@@ -307,7 +313,8 @@ def resolve_catalog(discovered_catalog, streams_to_sync):
         catalog_metadata = metadata.to_map(catalog_entry.metadata)
         replication_key = catalog_metadata.get((), {}).get('replication-key')
 
-        discovered_table = discovered_catalog.get_stream(catalog_entry.tap_stream_id)
+        discovered_table = discovered_catalog.get_stream(
+            catalog_entry.tap_stream_id)
         database_name = common.get_database_name(catalog_entry)
 
         if not discovered_table:
@@ -320,6 +327,11 @@ def resolve_catalog(discovered_catalog, streams_to_sync):
 
         # These are the columns we need to select
         columns = desired_columns(selected, discovered_table.schema)
+
+        if (len(columns) > MAX_COLS):
+            raise Exception(f'Number of columns cannot exceed {MAX_COLS}')
+        else:
+            LOGGER.info('length of cols: ', len(columns))
 
         result.streams.append(CatalogEntry(
             tap_stream_id=catalog_entry.tap_stream_id,
@@ -358,7 +370,8 @@ def get_streams(snowflake_conn, catalog, config, state):
 
     # Filter catalog to include only selected streams
     # pylint: disable=unnecessary-lambda
-    selected_streams = list(filter(lambda s: common.stream_is_selected(s), catalog.streams))
+    selected_streams = list(
+        filter(lambda s: common.stream_is_selected(s), catalog.streams))
     streams_with_state = []
     streams_without_state = []
 
@@ -382,7 +395,8 @@ def get_streams(snowflake_conn, catalog, config, state):
         currently_syncing_stream = list(filter(
             lambda s: s.tap_stream_id == currently_syncing, streams_with_state))
 
-        non_currently_syncing_streams = list(filter(lambda s: s.tap_stream_id != currently_syncing, ordered_streams))
+        non_currently_syncing_streams = list(
+            filter(lambda s: s.tap_stream_id != currently_syncing, ordered_streams))
 
         streams_to_sync = currently_syncing_stream + non_currently_syncing_streams
     else:
@@ -404,7 +418,8 @@ def write_schema_message(catalog_entry, bookmark_properties=None):
 
 
 def do_sync_incremental(snowflake_conn, catalog_entry, state, columns):
-    LOGGER.info('Stream %s is using incremental replication', catalog_entry.stream)
+    LOGGER.info('Stream %s is using incremental replication',
+                catalog_entry.stream)
 
     md_map = metadata.to_map(catalog_entry.metadata)
     replication_key = md_map.get((), {}).get('replication-key')
@@ -422,13 +437,16 @@ def do_sync_incremental(snowflake_conn, catalog_entry, state, columns):
 
 
 def do_sync_full_table(snowflake_conn, catalog_entry, state, columns):
-    LOGGER.info('Stream %s is using full table replication', catalog_entry.stream)
+    LOGGER.info('Stream %s is using full table replication',
+                catalog_entry.stream)
 
     write_schema_message(catalog_entry)
 
-    stream_version = common.get_stream_version(catalog_entry.tap_stream_id, state)
+    stream_version = common.get_stream_version(
+        catalog_entry.tap_stream_id, state)
 
-    full_table.sync_table(snowflake_conn, catalog_entry, state, columns, stream_version)
+    full_table.sync_table(snowflake_conn, catalog_entry,
+                          state, columns, stream_version)
 
     # Prefer initial_full_table_complete going forward
     singer.clear_bookmark(state, catalog_entry.tap_stream_id, 'version')
@@ -446,10 +464,12 @@ def sync_streams(snowflake_conn, catalog, state):
         columns = list(catalog_entry.schema.properties.keys())
 
         if not columns:
-            LOGGER.warning('There are no columns selected for stream %s, skipping it.', catalog_entry.stream)
+            LOGGER.warning(
+                'There are no columns selected for stream %s, skipping it.', catalog_entry.stream)
             continue
 
-        state = singer.set_currently_syncing(state, catalog_entry.tap_stream_id)
+        state = singer.set_currently_syncing(
+            state, catalog_entry.tap_stream_id)
 
         # Emit a state message to indicate that we've started this stream
         singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
@@ -465,14 +485,18 @@ def sync_streams(snowflake_conn, catalog, state):
             timer.tags['database'] = database_name
             timer.tags['table'] = catalog_entry.table
 
-            LOGGER.info('Beginning to sync %s.%s.%s', database_name, schema_name, catalog_entry.table)
+            LOGGER.info('Beginning to sync %s.%s.%s', database_name,
+                        schema_name, catalog_entry.table)
 
             if replication_method == 'INCREMENTAL':
-                do_sync_incremental(snowflake_conn, catalog_entry, state, columns)
+                do_sync_incremental(
+                    snowflake_conn, catalog_entry, state, columns)
             elif replication_method == 'FULL_TABLE':
-                do_sync_full_table(snowflake_conn, catalog_entry, state, columns)
+                do_sync_full_table(
+                    snowflake_conn, catalog_entry, state, columns)
             else:
-                raise Exception('Only INCREMENTAL and FULL TABLE replication methods are supported')
+                raise Exception(
+                    'Only INCREMENTAL and FULL TABLE replication methods are supported')
 
     state = singer.set_currently_syncing(state, None)
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
@@ -497,7 +521,8 @@ def main_impl():
         catalog = Catalog.from_dict(args.properties)
         state = args.state or {}
         if args.config.get('profile_execution', False):
-            LOGGER.info(f'Executing with profiling enabled based on *profile_execution* config parameter')
+            LOGGER.info(
+                f'Executing with profiling enabled based on *profile_execution* config parameter')
             import cProfile
             pr = cProfile.Profile()
             pr.enable()
@@ -539,4 +564,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

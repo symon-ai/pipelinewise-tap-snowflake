@@ -20,7 +20,7 @@ pyarrow = "8.0.0"
 
 [tool.poetry.dev-dependencies]
 pylint = "2.8.*"
-pytest = "6.2.*"
+pytest = "7.4.*"
 pytest-cov = "2.12.*"
 unify = "0.5"
 

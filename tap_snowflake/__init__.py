@@ -7,6 +7,8 @@ import itertools
 import re
 import sys
 import logging
+import traceback
+import json
 
 import singer
 import singer.metrics as metrics
@@ -21,6 +23,7 @@ import tap_snowflake.sync_strategies.common as common
 import tap_snowflake.sync_strategies.full_table as full_table
 import tap_snowflake.sync_strategies.incremental as incremental
 from tap_snowflake.connection import SnowflakeConnection
+from tap_snowflake.symon_exception import SymonException
 
 LOGGER = singer.get_logger('tap_snowflake')
 
@@ -329,9 +332,9 @@ def resolve_catalog(discovered_catalog, streams_to_sync):
         columns = desired_columns(selected, discovered_table.schema)
 
         if (len(columns) > MAX_COLS):
-            raise Exception(f'Number of columns cannot exceed {MAX_COLS}')
+            raise SymonException(f'Number of columns could not exceed {MAX_COLS}', 'snowflake.SnowflakeClientError')
         else:
-            LOGGER.info('length of cols: ', len(columns))
+            LOGGER.info(f'length of cols: {len(columns)}')
 
         result.streams.append(CatalogEntry(
             tap_stream_id=catalog_entry.tap_stream_id,
@@ -508,50 +511,83 @@ def do_sync(snowflake_conn, config, catalog, state):
 
 
 def main_impl():
-    args = utils.parse_args(REQUIRED_CONFIG_KEYS)
+    try:
+        # used for storing error info to write if error occurs
+        error_info = None
+        args = utils.parse_args(REQUIRED_CONFIG_KEYS)
 
-    snowflake_conn = SnowflakeConnection(args.config)
+        snowflake_conn = SnowflakeConnection(args.config)
 
-    if args.discover:
-        do_discover(snowflake_conn, args.config)
-    elif args.catalog:
-        state = args.state or {}
-        do_sync(snowflake_conn, args.config, args.catalog, state)
-    elif args.properties:
-        catalog = Catalog.from_dict(args.properties)
-        state = args.state or {}
-        if args.config.get('profile_execution', False):
-            LOGGER.info(
-                f'Executing with profiling enabled based on *profile_execution* config parameter')
-            import cProfile
-            pr = cProfile.Profile()
-            pr.enable()
-            do_sync(snowflake_conn, args.config, catalog, state)
-            pr.disable()
-            pr.dump_stats('output.dat')
+        if args.discover:
+            do_discover(snowflake_conn, args.config)
+        elif args.catalog:
+            state = args.state or {}
+            do_sync(snowflake_conn, args.config, args.catalog, state)
+        elif args.properties:
+            catalog = Catalog.from_dict(args.properties)
+            state = args.state or {}
+            if args.config.get('profile_execution', False):
+                LOGGER.info(
+                    f'Executing with profiling enabled based on *profile_execution* config parameter')
+                import cProfile
+                pr = cProfile.Profile()
+                pr.enable()
+                do_sync(snowflake_conn, args.config, catalog, state)
+                pr.disable()
+                pr.dump_stats('output.dat')
 
-            import pstats
-            from pstats import SortKey
+                import pstats
+                from pstats import SortKey
 
-            import time
+                import time
 
-            time_str = time.strftime("%Y%m%d-%H%M%S")
+                time_str = time.strftime("%Y%m%d-%H%M%S")
 
-            with open(f'output_time_{time_str}.txt', 'w') as f:
-                p = pstats.Stats("output.dat", stream=f)
-                p.sort_stats("time").print_stats()
-                LOGGER.info(f'Execution profile written to {f.name}')
+                with open(f'output_time_{time_str}.txt', 'w') as f:
+                    p = pstats.Stats("output.dat", stream=f)
+                    p.sort_stats("time").print_stats()
+                    LOGGER.info(f'Execution profile written to {f.name}')
 
-            with open(f'output_calls_{time_str}.txt', 'w') as f:
-                p = pstats.Stats("output.dat", stream=f)
-                p.sort_stats("calls").print_stats()
-                LOGGER.info(f'Execution profile written to {f.name}')
+                with open(f'output_calls_{time_str}.txt', 'w') as f:
+                    p = pstats.Stats("output.dat", stream=f)
+                    p.sort_stats("calls").print_stats()
+                    LOGGER.info(f'Execution profile written to {f.name}')
+
+            else:
+                do_sync(snowflake_conn, args.config, catalog, state)
 
         else:
-            do_sync(snowflake_conn, args.config, catalog, state)
+            LOGGER.info('No properties were selected')
+    except SymonException as e:
+        error_info = {
+            'message': str(e),
+            'code': e.code,
+            'traceback': traceback.format_exc()
+        }
 
-    else:
-        LOGGER.info('No properties were selected')
+        if e.details is not None:
+            error_info['details'] = e.details
+        raise
+    except BaseException as e:
+        error_info = {
+            'message': str(e),
+            'traceback': traceback.format_exc()
+        }
+        raise
+    finally:
+        if error_info is not None:
+            error_file_path = args.config.get('error_file_path', None)
+            if error_file_path is not None:
+                try:
+                    with open(error_file_path, 'w', encoding='utf-8') as fp:
+                        json.dump(error_info, fp)
+                except:
+                    pass
+            # log error info as well in case file is corrupted
+            error_info_json = json.dumps(error_info)
+            error_start_marker = args.config.get('error_start_marker', '[tap_error_start]')
+            error_end_marker = args.config.get('error_end_marker', '[tap_error_end]')
+            LOGGER.info(f'{error_start_marker}{error_info_json}{error_end_marker}')
 
 
 def main():

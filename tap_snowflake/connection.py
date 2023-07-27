@@ -5,6 +5,7 @@ import backoff
 import singer
 import sys
 import snowflake.connector
+from tap_snowflake.symon_exception import SymonException
 
 LOGGER = singer.get_logger('tap_snowflake')
 
@@ -68,20 +69,24 @@ class SnowflakeConnection:
 
     def open_connection(self):
         """Connect to snowflake database"""
-        return snowflake.connector.connect(
-            user=self.connection_config['user'],
-            password=self.connection_config['password'],
-            account=self.connection_config['account'],
-            role=self.connection_config.get('role'),  # optional parameter
-            database=self.connection_config['dbname'],
-            warehouse=self.connection_config['warehouse'],
-            client_prefetch_threads=self.connection_config.get(
-                'client_prefetch_threads', 4),
-            insecure_mode=self.connection_config.get('insecure_mode', False),
-            network_timeout=50
-            # Use insecure mode to avoid "Failed to get OCSP response" warnings
-            # insecure_mode=True
-        )
+        try:
+            return snowflake.connector.connect(
+                user=self.connection_config['user'],
+                password=self.connection_config['password'],
+                account=self.connection_config['account'],
+                role=self.connection_config.get('role'),  # optional parameter
+                database=self.connection_config['dbname'],
+                warehouse=self.connection_config['warehouse'],
+                client_prefetch_threads=self.connection_config.get(
+                    'client_prefetch_threads', 4),
+                insecure_mode=self.connection_config.get('insecure_mode', False),
+                network_timeout=50
+                # Use insecure mode to avoid "Failed to get OCSP response" warnings
+                # insecure_mode=True
+            )
+        except snowflake.connector.errors.DatabaseError as e:
+            if 'Incorrect username or password was specified' in str(e):
+                raise SymonException('The username and password provided are incorrect. Please try again.', 'snowflake.SnowflakeClientError')
 
     @retry_pattern()
     def connect_with_backoff(self):
@@ -117,7 +122,27 @@ class SnowflakeConnection:
                     # update the LAST_QID
                     params['LAST_QID'] = qid
 
-                    cur.execute(sql, params)
+                    try:
+                        cur.execute(sql, params)
+                    except snowflake.connector.errors.ProgrammingError as e:
+                        message = str(e)
+                        if "does not exist or not authorized" in message:
+                            if "Table" in message:
+                                table_name = message[message.find("Table"):message.find(" does not exist")].replace("'", '"')
+                                raise SymonException(f'{table_name} not found, or you are not authorized to access it', 'snowflake.SnowflakeClientError')
+                            if "Schema" in message:
+                                schema_name = message[message.find("Schema"):message.find(" does not exist")].replace("'", '"')
+                                raise SymonException(f'{schema_name} not found, or you are not authorized to access it', 'snowflake.SnowflakeClientError')
+                            if "Database" in message:
+                                database_name = message[message.find("Database"):message.find(" does not exist")].replace("'", '"')
+                                raise SymonException(f'{database_name} not found, or you are not authorized to access it', 'snowflake.SnowflakeClientError')
+                            raise
+                        if 'No active warehouse selected in the current session.' in message:
+                            raise SymonException(f'The warehouse provided is incorrect. Please ensure it is correct.', 'snowflake.SnowflakeClientError')
+                        if 'This session does not have a current database' in message:
+                            raise SymonException(f'The database provided is incorrect. Please ensure it is correct.', 'snowflake.SnowflakeClientError')
+                        raise
+
                     qid = cur.sfqid
 
                     # Raise exception if returned rows greater than max allowed records

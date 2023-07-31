@@ -89,7 +89,7 @@ class SnowflakeConnection:
                 raise SymonException('The username and password provided are incorrect. Please try again.', 'snowflake.SnowflakeClientError')
         except snowflake.connector.errors.ForbiddenError as e:
             if 'Failed to connect to DB. Verify the account name is correct' in str(e):
-                raise SymonException("Sorry, we couldn't connect to the database. Please ensure that Snowflake URL is correct.", "snowflake.SnowflakeClientError")
+                raise SymonException("Sorry, we couldn't connect to the database. Please check the Snowflake URL and try again.", "snowflake.SnowflakeClientError")
 
     @retry_pattern()
     def connect_with_backoff(self):

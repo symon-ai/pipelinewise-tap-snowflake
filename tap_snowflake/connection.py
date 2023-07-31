@@ -87,6 +87,9 @@ class SnowflakeConnection:
         except snowflake.connector.errors.DatabaseError as e:
             if 'Incorrect username or password was specified' in str(e):
                 raise SymonException('The username and password provided are incorrect. Please try again.', 'snowflake.SnowflakeClientError')
+        except snowflake.connector.errors.ForbiddenError as e:
+            if 'Failed to connect to DB. Verify the account name is correct' in str(e):
+                raise SymonException("Sorry, we couldn't connect to the database. Please ensure that Snowflake URL is correct.", "snowflake.SnowflakeClientError")
 
     @retry_pattern()
     def connect_with_backoff(self):
@@ -129,18 +132,18 @@ class SnowflakeConnection:
                         if "does not exist or not authorized" in message:
                             if "Table" in message:
                                 table_name = message[message.find("Table"):message.find(" does not exist")].replace("'", '"')
-                                raise SymonException(f'{table_name} not found, or you are not authorized to access it', 'snowflake.SnowflakeClientError')
+                                raise SymonException(f'{table_name} was not found, or you are not authorized to access it.', 'snowflake.SnowflakeClientError')
                             if "Schema" in message:
                                 schema_name = message[message.find("Schema"):message.find(" does not exist")].replace("'", '"')
-                                raise SymonException(f'{schema_name} not found, or you are not authorized to access it', 'snowflake.SnowflakeClientError')
+                                raise SymonException(f'{schema_name} was not found, or you are not authorized to access it.', 'snowflake.SnowflakeClientError')
                             if "Database" in message:
                                 database_name = message[message.find("Database"):message.find(" does not exist")].replace("'", '"')
-                                raise SymonException(f'{database_name} not found, or you are not authorized to access it', 'snowflake.SnowflakeClientError')
+                                raise SymonException(f'{database_name} was not found, or you are not authorized to access it.', 'snowflake.SnowflakeClientError')
                             raise
                         if 'No active warehouse selected in the current session.' in message:
-                            raise SymonException(f'The warehouse provided is incorrect. Please ensure it is correct.', 'snowflake.SnowflakeClientError')
+                            raise SymonException(f'The warehouse provided is incorrect. Please ensure it is correct and you are authorized to access it', 'snowflake.SnowflakeClientError')
                         if 'This session does not have a current database' in message:
-                            raise SymonException(f'The database provided is incorrect. Please ensure it is correct.', 'snowflake.SnowflakeClientError')
+                            raise SymonException(f'The database provided is incorrect. Please ensure it is correct and you are authorized to access it.', 'snowflake.SnowflakeClientError')
                         raise
 
                     qid = cur.sfqid

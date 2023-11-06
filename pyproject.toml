@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pipelinewise-tap-snowflake"
-version = "2.0.12"
+version = "2.0.13"
 description = "Singer.io tap for extracting data from Snowflake - PipelineWise compatible"
 authors = ["TransferWise"]
 classifiers=["License :: OSI Approved :: Apache Software License","Programming Language :: Python :: 3 :: Only"]

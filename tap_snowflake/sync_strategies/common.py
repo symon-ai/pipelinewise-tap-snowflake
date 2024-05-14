@@ -121,6 +121,26 @@ def generate_select_sql(catalog_entry, columns):
     return select_sql
 
 
+def generate_copy_to_s3_sql(s3_loc, catalog_entry, aws_temp_creds):
+    database_name = get_database_name(catalog_entry)
+    schema_name = get_schema_name(catalog_entry)
+    escaped_db = escape(database_name)
+    escaped_schema = escape(schema_name)
+    escaped_table = escape(catalog_entry.table)
+
+
+    s3_url = f"s3://{s3_loc['bucket']}/{s3_loc['key']}/{catalog_entry.table}"
+    credentials_line = f"CREDENTIALS = (AWS_KEY_ID = '{aws_temp_creds['accessKeyID']}', AWS_SECRET_KEY = '{aws_temp_creds['secretKey']}', AWS_TOKEN = '{aws_temp_creds['sessionToken']}')"
+    file_format_line = f"FILE_FORMAT = (TYPE = 'PARQUET')"
+    copy_option_line = f"HEADER = TRUE DETAILED_OUTPUT = TRUE"
+    
+    copy_sql = f"COPY INTO '{s3_url}' FROM {escaped_db}.{escaped_schema}.{escaped_table} {credentials_line} {file_format_line} {copy_option_line}"
+
+    # escape percent signs
+    copy_sql = copy_sql.replace('%', '%%')
+    return copy_sql
+
+
 # pylint: disable=too-many-branches
 def row_to_singer_record(catalog_entry, version, row, columns, time_extracted):
     """Transform SQL row to singer compatible record message"""

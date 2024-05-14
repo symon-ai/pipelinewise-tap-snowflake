@@ -513,6 +513,20 @@ def do_sync(snowflake_conn, config, catalog, state):
     sync_streams(snowflake_conn, catalog, state)
 
 
+def do_sync_with_direct_unload(snowflake_conn, config, catalog, state):
+    catalog = get_streams(snowflake_conn, catalog, config, state)
+
+    for catalog_entry in catalog.streams:
+        with snowflake_conn.connect_with_backoff() as open_conn:
+            with open_conn.cursor() as cur:
+                copy_sql = common.generate_copy_to_s3_sql(config.get('temp_s3_upload_folder'), catalog_entry, config.get('aws_temp_creds'))
+
+                LOGGER.info(f'Running query: {copy_sql}')
+                cur.execute(copy_sql)
+                results = cur.fetchall()
+                LOGGER.info(results)
+
+
 def main_impl():
     try:
         # used for storing error info to write if error occurs
@@ -556,6 +570,8 @@ def main_impl():
                     p.sort_stats("calls").print_stats()
                     LOGGER.info(f'Execution profile written to {f.name}')
 
+            elif args.config.get('aws_temp_creds', None) is not None and args.config.get('temp_s3_upload_folder', None) is not None:
+                do_sync_with_direct_unload(snowflake_conn, args.config, catalog, state)
             else:
                 do_sync(snowflake_conn, args.config, catalog, state)
 

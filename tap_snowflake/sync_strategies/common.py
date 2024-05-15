@@ -141,6 +141,46 @@ def generate_copy_to_s3_sql(s3_loc, catalog_entry, aws_temp_creds):
     return copy_sql
 
 
+def generate_copy_to_user_stage_sql(catalog_entry):
+    database_name = get_database_name(catalog_entry)
+    schema_name = get_schema_name(catalog_entry)
+    escaped_db = escape(database_name)
+    escaped_schema = escape(schema_name)
+    escaped_table = escape(catalog_entry.table)
+
+    file_format_line = f"FILE_FORMAT = (TYPE = 'PARQUET')"
+    copy_option_line = f"HEADER = TRUE DETAILED_OUTPUT = TRUE"
+
+    copy_sql = f"COPY INTO @~/{escaped_table}/ FROM {escaped_db}.{escaped_schema}.{escaped_table} {file_format_line} {copy_option_line}"
+
+    # escape percent signs
+    copy_sql = copy_sql.replace('%', '%%')
+    return copy_sql
+
+
+def generate_list_sql(catalog_entry):
+    escaped_table = escape(catalog_entry.table)
+    list_sql = f"LIST @~/{escaped_table}/"
+
+    # escape percent signs
+    list_sql = list_sql.replace('%', '%%')
+    return list_sql
+
+def generate_get_sql(file_name, working_dir):
+    get_sql = f"GET @~/{file_name} file://{working_dir}/"
+    
+    # escape percent signs
+    get_sql = get_sql.replace('%', '%%')
+    return get_sql
+
+def generate_remove_sql(catalog_entry):
+    escaped_table = escape(catalog_entry.table)
+    remove_sql = f"REMOVE @~/{escaped_table}/"
+
+    # escape percent signs
+    remove_sql = remove_sql.replace('%', '%%')
+    return remove_sql
+
 # pylint: disable=too-many-branches
 def row_to_singer_record(catalog_entry, version, row, columns, time_extracted):
     """Transform SQL row to singer compatible record message"""

@@ -9,6 +9,8 @@ import sys
 import logging
 import traceback
 import json
+import os
+from uuid import uuid4
 
 import singer
 import singer.metrics as metrics
@@ -24,6 +26,8 @@ import tap_snowflake.sync_strategies.full_table as full_table
 import tap_snowflake.sync_strategies.incremental as incremental
 from tap_snowflake.connection import SnowflakeConnection
 from tap_snowflake.symon_exception import SymonException
+
+import boto3
 
 LOGGER = singer.get_logger('tap_snowflake')
 
@@ -513,7 +517,7 @@ def do_sync(snowflake_conn, config, catalog, state):
     sync_streams(snowflake_conn, catalog, state)
 
 
-def do_sync_with_direct_unload(snowflake_conn, config, catalog, state):
+def do_sync_with_external_unload(snowflake_conn, config, catalog, state):
     catalog = get_streams(snowflake_conn, catalog, config, state)
 
     for catalog_entry in catalog.streams:
@@ -525,6 +529,55 @@ def do_sync_with_direct_unload(snowflake_conn, config, catalog, state):
                 cur.execute(copy_sql)
                 results = cur.fetchall()
                 LOGGER.info(results)
+
+
+def do_sync_with_internal_unload(snowflake_conn, config, catalog, state):
+    catalog = get_streams(snowflake_conn, catalog, config, state)
+    s3_client = boto3.client('s3')
+    
+    for catalog_entry in catalog.streams:
+        with snowflake_conn.connect_with_backoff() as open_conn:
+            with open_conn.cursor() as cur:
+                copy_sql = common.generate_copy_to_user_stage_sql(catalog_entry)
+
+                LOGGER.info(f'Running COPY query: {copy_sql}')
+                cur.execute(copy_sql)
+                results = cur.fetchall()
+                LOGGER.info(f'COPY query results: {results}')
+
+                list_sql = common.generate_list_sql(catalog_entry)
+                LOGGER.info(f'Running LIST query: {copy_sql}')
+                cur.execute(list_sql)
+                results = cur.fetchall()
+                LOGGER.info(f'LIST query results: {results}')
+                
+                working_dir = f'{os.getcwd()}'
+                # if not os.path.exists(working_dir):
+                #     os.mkdir(working_dir)
+                for file_info in results:
+                    file_name = file_info[0]
+                    get_sql = common.generate_get_sql(file_name, working_dir)
+
+                    LOGGER.info(f'Running GET query: {file_name}')
+                    cur.execute(get_sql)
+                    results = cur.fetchall()
+                    LOGGER.info(f'GET query results: {results}')
+
+                    downloaded_file_name = f'{working_dir}/{os.path.basename(results[0][0])}'
+                    upload_file_to_s3(s3_client, downloaded_file_name, config.get('temp_s3_upload_folder'))
+                    os.remove(downloaded_file_name)
+
+                remove_sql = common.generate_remove_sql(catalog_entry)
+                LOGGER.info(f'Running REMOVE query: {remove_sql}')
+                cur.execute(remove_sql)
+                results = cur.fetchall()
+                LOGGER.info(f'REMOVE query results: {results}')
+
+
+def upload_file_to_s3(s3_client, file_to_copy, s3_loc):
+    upload_key = f'{s3_loc["key"]}/{os.path.basename(file_to_copy)}'
+    LOGGER.info(f'Uploading file {file_to_copy} to s3://{s3_loc["bucket"]}/{upload_key}')
+    s3_client.upload_file(file_to_copy, s3_loc['bucket'], upload_key)
 
 
 def main_impl():
@@ -571,7 +624,9 @@ def main_impl():
                     LOGGER.info(f'Execution profile written to {f.name}')
 
             elif args.config.get('aws_temp_creds', None) is not None and args.config.get('temp_s3_upload_folder', None) is not None:
-                do_sync_with_direct_unload(snowflake_conn, args.config, catalog, state)
+                do_sync_with_external_unload(snowflake_conn, args.config, catalog, state)
+            elif args.config.get('temp_s3_upload_folder', None):
+                do_sync_with_internal_unload(snowflake_conn, args.config, catalog, state)
             else:
                 do_sync(snowflake_conn, args.config, catalog, state)
 

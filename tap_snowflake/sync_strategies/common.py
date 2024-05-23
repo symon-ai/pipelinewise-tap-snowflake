@@ -14,6 +14,7 @@ import logging
 import os
 import pickle
 import boto3
+from uuid import uuid4
 
 LOGGER = singer.get_logger('tap_snowflake')
 
@@ -322,8 +323,9 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
     
     if result_batch_location is not None:
         s3 = boto3.client('s3')
-        s3.download_file(result_batch_location['bucket'], result_batch_location['key'] + '/importFileCopy/sf_batches', 'batches')
-        batches = pickle.load(open('batches', 'rb'))
+        download_filename = f'{uuid4()}'
+        s3.download_file(result_batch_location['bucket'], result_batch_location['key'] + '/importFileCopy/sf_batches', download_filename)
+        batches = pickle.load(open(download_filename, 'rb'))
 
         rows_saved = 0
         database_name = get_database_name(catalog_entry)
@@ -351,9 +353,10 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
                                                         time_extracted)
                     singer.write_message(record_message)
                 
-                index += total_workers
+                index += total_workers + 100
 
-            os.remove('batches')
+            os.remove(download_filename)
+            singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
             return
 
     LOGGER.info('Running %s', select_sql)

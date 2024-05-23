@@ -11,6 +11,7 @@ import traceback
 import json
 import os
 from uuid import uuid4
+import time
 
 import singer
 import singer.metrics as metrics
@@ -582,6 +583,7 @@ def upload_file_to_s3(s3_client, file_to_copy, s3_loc):
 
 def main_impl():
     try:
+        start = time.time()
         # used for storing error info to write if error occurs
         error_info = None
         args = utils.parse_args(REQUIRED_CONFIG_KEYS)
@@ -609,8 +611,6 @@ def main_impl():
                 import pstats
                 from pstats import SortKey
 
-                import time
-
                 time_str = time.strftime("%Y%m%d-%H%M%S")
 
                 with open(f'output_time_{time_str}.txt', 'w') as f:
@@ -632,6 +632,8 @@ def main_impl():
 
         else:
             LOGGER.info('No properties were selected')
+        end = time.time()
+        LOGGER.info(f"tap start: {start} --- end: {end} --- diff: {end - start}")
     except SymonException as e:
         exc_type, exc_value, exc_traceback = sys.exc_info()
         error_info = {

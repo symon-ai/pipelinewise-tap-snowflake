@@ -322,7 +322,7 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
     
     if result_batch_location is not None:
         s3 = boto3.client('s3')
-        s3.download_file(result_batch_location['bucket'], result_batch_location['key'] + '/sf_batches', 'batches')
+        s3.download_file(result_batch_location['bucket'], result_batch_location['key'] + '/importFileCopy/sf_batches', 'batches')
         batches = pickle.load(open('batches', 'rb'))
 
         rows_saved = 0

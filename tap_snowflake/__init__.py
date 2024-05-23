@@ -446,7 +446,7 @@ def do_sync_incremental(snowflake_conn, catalog_entry, state, columns):
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
 
-def do_sync_full_table(snowflake_conn, catalog_entry, state, columns):
+def do_sync_full_table(snowflake_conn, catalog_entry, state, columns, config):
     LOGGER.info('Stream %s is using full table replication',
                 catalog_entry.stream)
 
@@ -456,7 +456,7 @@ def do_sync_full_table(snowflake_conn, catalog_entry, state, columns):
         catalog_entry.tap_stream_id, state)
 
     full_table.sync_table(snowflake_conn, catalog_entry,
-                          state, columns, stream_version)
+                          state, columns, stream_version, config)
 
     # Prefer initial_full_table_complete going forward
     singer.clear_bookmark(state, catalog_entry.tap_stream_id, 'version')
@@ -469,7 +469,7 @@ def do_sync_full_table(snowflake_conn, catalog_entry, state, columns):
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
 
-def sync_streams(snowflake_conn, catalog, state):
+def sync_streams(snowflake_conn, catalog, state, config):
     for catalog_entry in catalog.streams:
         columns = list(catalog_entry.schema.properties.keys())
 
@@ -503,7 +503,7 @@ def sync_streams(snowflake_conn, catalog, state):
                     snowflake_conn, catalog_entry, state, columns)
             elif replication_method == 'FULL_TABLE':
                 do_sync_full_table(
-                    snowflake_conn, catalog_entry, state, columns)
+                    snowflake_conn, catalog_entry, state, columns, config)
             else:
                 raise Exception(
                     'Only INCREMENTAL and FULL TABLE replication methods are supported')
@@ -514,7 +514,7 @@ def sync_streams(snowflake_conn, catalog, state):
 
 def do_sync(snowflake_conn, config, catalog, state):
     catalog = get_streams(snowflake_conn, catalog, config, state)
-    sync_streams(snowflake_conn, catalog, state)
+    sync_streams(snowflake_conn, catalog, state, config)
 
 
 def do_sync_with_external_unload(snowflake_conn, config, catalog, state):
@@ -546,7 +546,7 @@ def do_sync_with_internal_unload(snowflake_conn, config, catalog, state):
                 LOGGER.info(f'COPY query results: {results}')
 
                 list_sql = common.generate_list_sql(catalog_entry)
-                LOGGER.info(f'Running LIST query: {copy_sql}')
+                LOGGER.info(f'Running LIST query: {list_sql}')
                 cur.execute(list_sql)
                 results = cur.fetchall()
                 LOGGER.info(f'LIST query results: {results}')
@@ -558,7 +558,7 @@ def do_sync_with_internal_unload(snowflake_conn, config, catalog, state):
                     file_name = file_info[0]
                     get_sql = common.generate_get_sql(file_name, working_dir)
 
-                    LOGGER.info(f'Running GET query: {file_name}')
+                    LOGGER.info(f'Running GET query: {get_sql}')
                     cur.execute(get_sql)
                     results = cur.fetchall()
                     LOGGER.info(f'GET query results: {results}')

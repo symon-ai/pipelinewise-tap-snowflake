@@ -10,6 +10,10 @@ import singer
 import singer.metrics as metrics
 from singer import metadata
 from singer import utils
+import logging
+import os
+import pickle
+import boto3
 
 LOGGER = singer.get_logger('tap_snowflake')
 
@@ -295,14 +299,62 @@ def whitelist_bookmark_keys(bookmark_key_set, tap_stream_id, state):
                          if non_whitelisted_bookmark_key not in bookmark_key_set]:
         singer.clear_bookmark(state, tap_stream_id, bookmark_key)
 
+# def set_log_level():
+#     for logger_name in ['snowflake.sqlalchemy', 'snowflake.connector', 'botocore']:
+#         logger = logging.getLogger(logger_name)
+#         logger.setLevel(logging.DEBUG)
+#         ch = logging.StreamHandler()
+#         ch.setLevel(logging.DEBUG)
+#         ch.setFormatter(logging.Formatter('%(asctime)s - %(threadName)s - %(filename)s:%(lineno)d - %(funcName)s - %(levelname)s - %(message)s'))
 
-def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version, params):
+def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version, params, config=None):
     """..."""
     replication_key = singer.get_bookmark(state,
                                           catalog_entry.tap_stream_id,
                                           'replication_key')
 
     time_extracted = utils.now()
+
+    if config is not None:
+        result_batch_location = config.get('result_batch_location')
+        index = config.get('index')
+        total_workers = config.get('total_workers')
+    
+    if result_batch_location is not None:
+        s3 = boto3.client('s3')
+        s3.download_file(result_batch_location['bucket'], result_batch_location['key'] + '/sf_batches', 'batches')
+        batches = pickle.load(open('batches', 'rb'))
+
+        rows_saved = 0
+        database_name = get_database_name(catalog_entry)
+        with metrics.record_counter(None) as counter:
+            counter.tags['database'] = database_name
+            counter.tags['table'] = catalog_entry.table
+
+            md_map = metadata.to_map(catalog_entry.metadata)
+            stream_metadata = md_map.get((), {})
+            replication_method = stream_metadata.get('replication-method')
+
+            key_properties = get_key_properties(catalog_entry)
+
+            while index < len(batches):
+                batch = batches[index]
+                LOGGER.info(f'Processing batch {index}: {batch}')
+
+                for row in batch:
+                    counter.increment()
+                    rows_saved += 1
+                    record_message = row_to_singer_record2(catalog_entry,
+                                                        stream_version,
+                                                        row,
+                                                        columns,
+                                                        time_extracted)
+                    singer.write_message(record_message)
+                
+                index += total_workers
+
+            os.remove('batches')
+            return
 
     LOGGER.info('Running %s', select_sql)
     cursor.execute(select_sql, params)

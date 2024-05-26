@@ -353,7 +353,7 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
                                                         time_extracted)
                     singer.write_message(record_message)
                 
-                index += total_workers + 100
+                index += total_workers
 
             os.remove(download_filename)
             singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))

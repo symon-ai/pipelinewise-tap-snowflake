@@ -12,6 +12,8 @@ import json
 import os
 from uuid import uuid4
 import time
+import pickle
+import shutil
 
 import singer
 import singer.metrics as metrics
@@ -82,31 +84,31 @@ def schema_for_column(c):
     inclusion = 'available'
     result = Schema(inclusion=inclusion)
 
-    if data_type == 'boolean':
+    if data_type == 'boolean': # done
         result.type = ['null', 'boolean']
 
-    elif data_type in INTEGER_TYPES:
+    elif data_type in INTEGER_TYPES: # done
         result.type = ['null', 'number']
 
-    elif data_type in FLOAT_TYPES:
+    elif data_type in FLOAT_TYPES: # done
         result.type = ['null', 'number']
 
-    elif data_type in NUMBER_TYPES:
+    elif data_type in NUMBER_TYPES: # done
         result.type = ['null', 'number']
 
-    elif data_type in STRING_TYPES:
+    elif data_type in STRING_TYPES: # done
         result.type = ['null', 'string']
         result.maxLength = c.character_maximum_length
 
-    elif data_type in DATETIME_TYPES:
+    elif data_type in DATETIME_TYPES: # done
         result.type = ['null', 'string']
         result.format = 'date-time'
 
-    elif data_type == 'time':
+    elif data_type == 'time': # done
         result.type = ['null', 'string']
         result.format = 'time'
 
-    elif data_type in BINARY_TYPE:
+    elif data_type in BINARY_TYPE: # done - fail
         result.type = ['null', 'string']
         result.format = 'binary'
 
@@ -114,7 +116,7 @@ def schema_for_column(c):
         result.type = ['null', 'string']
         result.format = 'semi_structured'
 
-    elif data_type in GEOGRAPHY_TYPE:
+    elif data_type in GEOGRAPHY_TYPE: # done - fail
         result.type = ['null', 'string']
         result.format = 'geography'
 
@@ -428,6 +430,75 @@ def write_schema_message(catalog_entry, bookmark_properties=None):
     ))
 
 
+def do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_upload_folder):
+    with snowflake_conn.connect_with_backoff() as open_conn:
+        with open_conn.cursor() as cur:
+            # cur.execute('alter session set ENABLE_UNLOAD_PHYSICAL_TYPE_OPTIMIZATION = true')
+            # result = cur.fetchall()
+            # LOGGER.info(f'ALTER SESSION result: {result}')
+            
+            # prefix (subdirectory) to use for exporting table to snowflake user stage + downloading to local
+            prefix = uuid4()
+            
+            try:
+                # 1. export table to snowflake user stage as parquet files
+                select_sql = common.generate_select_sql(catalog_entry, columns)
+                copy_sql = common.generate_copy_sql(select_sql, prefix)
+                LOGGER.info(f'Running COPY query: {copy_sql}')
+                cur.execute(copy_sql)
+                copy_results = cur.fetchall()
+                LOGGER.info(f'COPY query result: {copy_results}')
+
+                # 2. list all files written to user stage
+                list_sql = f"LIST @~/{prefix}/"
+                LOGGER.info(f'Running LIST query: {list_sql}')
+                cur.execute(list_sql)
+                files_in_user_stage = cur.fetchall()
+                LOGGER.info(f'LIST query results: {files_in_user_stage}')
+                
+                # 3. download files to local working directory and move files to s3
+                s3_client = boto3.client('s3')
+                local_working_dir = f'{os.getcwd()}/{prefix}'
+                
+                if not os.path.exists(local_working_dir):
+                    os.mkdir(local_working_dir)
+                
+                for file_info in files_in_user_stage:
+                    filename = file_info[0]
+                    get_sql = f"GET @~/{filename} file://{local_working_dir}/"
+
+                    LOGGER.info(f'Running GET query: {get_sql}')
+                    cur.execute(get_sql)
+                    downloaded_filename = cur.fetchall()[0][0]
+                    common.upload_file_to_s3(s3_client, os.path.join(local_working_dir, downloaded_filename), temp_s3_upload_folder)
+                    os.remove(filename)
+            finally:
+                try:
+                    # remove files from snowflake user stage
+                    remove_sql = f"REMOVE @~/{prefix}/"
+                    LOGGER.info(f'Running REMOVE query: {remove_sql}')
+                    cur.execute(remove_sql)
+                    results = cur.fetchall()
+                    LOGGER.info(f'REMOVE query results: {results}')
+                    shutil.rmtree(local_working_dir)
+                except:
+                    pass
+
+
+def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_creds, temp_s3_upload_folder):
+    LOGGER.info(f'Unloading data to S3 for stream {catalog_entry.stream}')
+    with snowflake_conn.connect_with_backoff() as open_conn:
+        with open_conn.cursor() as cur:
+            select_sql = common.generate_select_sql(catalog_entry, columns)
+            prefix = uuid4()
+            copy_sql = common.generate_copy_sql(select_sql, prefix, temp_s3_upload_folder, temp_s3_creds)
+
+            LOGGER.info(f'Running COPY query: {copy_sql}')
+            cur.execute(copy_sql)
+            results = cur.fetchall()
+            LOGGER.info(f'COPY query result: {results}')
+
+
 def do_sync_incremental(snowflake_conn, catalog_entry, state, columns):
     LOGGER.info('Stream %s is using incremental replication',
                 catalog_entry.stream)
@@ -458,6 +529,70 @@ def do_sync_full_table(snowflake_conn, catalog_entry, state, columns, config):
 
     full_table.sync_table(snowflake_conn, catalog_entry,
                           state, columns, stream_version, config)
+
+    # Prefer initial_full_table_complete going forward
+    singer.clear_bookmark(state, catalog_entry.tap_stream_id, 'version')
+
+    state = singer.write_bookmark(state,
+                                  catalog_entry.tap_stream_id,
+                                  'initial_full_table_complete',
+                                  True)
+
+    singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
+
+def do_sync_full_table_parallel(snowflake_conn, catalog_entry, state, columns, config):
+    LOGGER.info('Stream %s is using full table replication',
+                catalog_entry.stream)
+    
+    result_batch_location = config.get('result_batch_location', None)
+    start_index = config.get('start_index', None)
+    total_workers = config.get('total_workers', None)
+
+    if result_batch_location is None:
+        raise Exception('No result_batch_location provided in config')
+
+    # For parallel import, we call do_sync_full_table_parallel twice:
+    # 1. first to submit sql query and write ResultBatch objects to s3 that could be used to fetch rows from
+    # 2. second to read ResultBatch objects from s3 and fetch rows in parallel
+    # only one of the two should be executed at a time
+    
+    # first call, query hasn't been executed. submit query and write ResultBatch objects to s3
+    if start_index is None and total_workers is None:
+        with snowflake_conn.connect_with_backoff() as open_conn:
+            with open_conn.cursor() as cur:
+                select_sql = common.generate_select_sql(catalog_entry, columns)
+                LOGGER.info(f'Running {select_sql}')
+                cur.execute(select_sql)
+
+                batches = cur.get_result_batches()
+                batches.sort(key=lambda x: x.uncompressed_size if x.uncompressed_size is not None else 0)
+                LOGGER.info(f'Sorted batches: {batches}')
+                
+                local_working_dir = f'{os.getcwd()}/{uuid4()}'
+                try:
+                    if not os.path.exists(local_working_dir):
+                        os.mkdir(local_working_dir)
+                    
+                    file_path = os.path.join(local_working_dir, common.RESULT_BATCH_FILENAME)
+                    pickle.dump(batches, open(file_path, 'wb'))
+
+                    s3_client = boto3.client('s3')
+                    common.upload_file_to_s3(s3_client, file_path, result_batch_location)
+                finally:
+                    try:
+                        shutil.rmtree(local_working_dir)
+                    except:
+                        pass
+        return
+    
+    # second call, query has been executed in prev call, read ResultBatch objects from s3 and sync in parallel
+    write_schema_message(catalog_entry)
+
+    stream_version = common.get_stream_version(
+        catalog_entry.tap_stream_id, state)
+
+    full_table.sync_table(snowflake_conn, catalog_entry,
+                          state, columns, stream_version, True, config)
 
     # Prefer initial_full_table_complete going forward
     singer.clear_bookmark(state, catalog_entry.tap_stream_id, 'version')
@@ -503,8 +638,21 @@ def sync_streams(snowflake_conn, catalog, state, config):
                 do_sync_incremental(
                     snowflake_conn, catalog_entry, state, columns)
             elif replication_method == 'FULL_TABLE':
-                do_sync_full_table(
-                    snowflake_conn, catalog_entry, state, columns, config)
+                # 4 syncing methods for Symon 
+                temp_s3_creds = config.get('temp_s3_creds', None)
+                temp_s3_upload_folder = config.get('temp_s3_upload_folder', None)
+                # 1) unload table as parquet files to s3
+                if temp_s3_creds is not None and temp_s3_upload_folder is not None:
+                    do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_creds, temp_s3_upload_folder)
+                # 2) unload table as parquet files to snowflake internal stage, move to s3
+                elif temp_s3_upload_folder is not None:
+                    do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_upload_folder)
+                # 3) parallel import - multiple workers running tap-snowflake
+                elif config.get('result_batch_location', None) is not None:
+                    do_sync_full_table_parallel(snowflake_conn, catalog_entry, state, columns, config)
+                # 4) normal import - single worker running tap-snowflake
+                else:
+                    do_sync_full_table(snowflake_conn, catalog_entry, state, columns, config)
             else:
                 raise Exception(
                     'Only INCREMENTAL and FULL TABLE replication methods are supported')
@@ -516,69 +664,6 @@ def sync_streams(snowflake_conn, catalog, state, config):
 def do_sync(snowflake_conn, config, catalog, state):
     catalog = get_streams(snowflake_conn, catalog, config, state)
     sync_streams(snowflake_conn, catalog, state, config)
-
-
-def do_sync_with_external_unload(snowflake_conn, config, catalog, state):
-    catalog = get_streams(snowflake_conn, catalog, config, state)
-
-    for catalog_entry in catalog.streams:
-        with snowflake_conn.connect_with_backoff() as open_conn:
-            with open_conn.cursor() as cur:
-                copy_sql = common.generate_copy_to_s3_sql(config.get('temp_s3_upload_folder'), catalog_entry, config.get('aws_temp_creds'))
-
-                LOGGER.info(f'Running query: {copy_sql}')
-                cur.execute(copy_sql)
-                results = cur.fetchall()
-                LOGGER.info(results)
-
-
-def do_sync_with_internal_unload(snowflake_conn, config, catalog, state):
-    catalog = get_streams(snowflake_conn, catalog, config, state)
-    s3_client = boto3.client('s3')
-    
-    for catalog_entry in catalog.streams:
-        with snowflake_conn.connect_with_backoff() as open_conn:
-            with open_conn.cursor() as cur:
-                copy_sql = common.generate_copy_to_user_stage_sql(catalog_entry)
-
-                LOGGER.info(f'Running COPY query: {copy_sql}')
-                cur.execute(copy_sql)
-                results = cur.fetchall()
-                LOGGER.info(f'COPY query results: {results}')
-
-                list_sql = common.generate_list_sql(catalog_entry)
-                LOGGER.info(f'Running LIST query: {list_sql}')
-                cur.execute(list_sql)
-                results = cur.fetchall()
-                LOGGER.info(f'LIST query results: {results}')
-                
-                working_dir = f'{os.getcwd()}'
-                # if not os.path.exists(working_dir):
-                #     os.mkdir(working_dir)
-                for file_info in results:
-                    file_name = file_info[0]
-                    get_sql = common.generate_get_sql(file_name, working_dir)
-
-                    LOGGER.info(f'Running GET query: {get_sql}')
-                    cur.execute(get_sql)
-                    results = cur.fetchall()
-                    LOGGER.info(f'GET query results: {results}')
-
-                    downloaded_file_name = f'{working_dir}/{os.path.basename(results[0][0])}'
-                    upload_file_to_s3(s3_client, downloaded_file_name, config.get('temp_s3_upload_folder'))
-                    os.remove(downloaded_file_name)
-
-                remove_sql = common.generate_remove_sql(catalog_entry)
-                LOGGER.info(f'Running REMOVE query: {remove_sql}')
-                cur.execute(remove_sql)
-                results = cur.fetchall()
-                LOGGER.info(f'REMOVE query results: {results}')
-
-
-def upload_file_to_s3(s3_client, file_to_copy, s3_loc):
-    upload_key = f'{s3_loc["key"]}/{os.path.basename(file_to_copy)}'
-    LOGGER.info(f'Uploading file {file_to_copy} to s3://{s3_loc["bucket"]}/{upload_key}')
-    s3_client.upload_file(file_to_copy, s3_loc['bucket'], upload_key)
 
 
 def main_impl():
@@ -623,10 +708,6 @@ def main_impl():
                     p.sort_stats("calls").print_stats()
                     LOGGER.info(f'Execution profile written to {f.name}')
 
-            elif args.config.get('aws_temp_creds', None) is not None and args.config.get('temp_s3_upload_folder', None) is not None:
-                do_sync_with_external_unload(snowflake_conn, args.config, catalog, state)
-            elif args.config.get('temp_s3_upload_folder', None):
-                do_sync_with_internal_unload(snowflake_conn, args.config, catalog, state)
             else:
                 do_sync(snowflake_conn, args.config, catalog, state)
 

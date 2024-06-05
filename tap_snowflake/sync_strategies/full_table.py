@@ -69,7 +69,7 @@ def generate_pk_clause(catalog_entry, state):
     return sql
 
 
-def sync_table(snowflake_conn, catalog_entry, state, columns, stream_version, config):
+def sync_table(snowflake_conn, catalog_entry, state, columns, stream_version, is_parallel_import=False, config=None):
     """Sync table with FULL_TABLE"""
     common.whitelist_bookmark_keys(BOOKMARK_KEYS, catalog_entry.tap_stream_id, state)
 
@@ -93,20 +93,26 @@ def sync_table(snowflake_conn, catalog_entry, state, columns, stream_version, co
     # at the beginning so the records show up right away.
     if not initial_full_table_complete and not (version_exists and state_version is None):
         singer.write_message(activate_version_message)
+    
+    if is_parallel_import:
+        if config is None:
+            raise Exception('Config is required for parallel import')
+        
+        common.sync_query_parallel(catalog_entry, state, columns, stream_version, config)
+    
+    else:
+        with snowflake_conn.connect_with_backoff() as open_conn:
+            with open_conn.cursor() as cur:
+                select_sql = common.generate_select_sql(catalog_entry, columns)
+                params = {}
 
-    with snowflake_conn.connect_with_backoff() as open_conn:
-        with open_conn.cursor() as cur:
-            select_sql = common.generate_select_sql(catalog_entry, columns)
-            params = {}
-
-            common.sync_query(cur,
-                              catalog_entry,
-                              state,
-                              select_sql,
-                              columns,
-                              stream_version,
-                              params,
-                              config)
+                common.sync_query(cur,
+                                catalog_entry,
+                                state,
+                                select_sql,
+                                columns,
+                                stream_version,
+                                params)
 
     # clear max pk value and last pk fetched upon successful sync
     singer.clear_bookmark(state, catalog_entry.tap_stream_id, 'max_pk_values')

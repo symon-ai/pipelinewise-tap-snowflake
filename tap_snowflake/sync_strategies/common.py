@@ -18,6 +18,8 @@ from uuid import uuid4
 
 LOGGER = singer.get_logger('tap_snowflake')
 
+RESULT_BATCH_FILENAME = 'snowflake_result_batches'
+
 def escape(string):
     """Escape strings to be SQL safe"""
     if '"' in string:
@@ -108,14 +110,28 @@ def generate_select_sql(catalog_entry, columns):
         
         # fetch the column type format from the json schema alreay built
         property_format = catalog_entry.schema.properties[col_name].format
+        data_type = catalog_entry.schema.properties[col_name].type[1]
 
         # if the column format is binary, fetch the hexified value
-        if property_format == 'binary':
-            escaped_columns.append(f'hex_encode({escaped_col}) as {escaped_col}')
-        elif property_format == 'semi_structured':
+        if property_format == 'semi_structured':
             escaped_columns.append(f'TO_VARCHAR({escaped_col}) as {escaped_col}')
+        elif property_format == 'binary':
+            escaped_columns.append(f'hex_encode({escaped_col}) as {escaped_col}')
         elif property_format == 'geography':
             escaped_columns.append(f'ST_ASTEXT({escaped_col}) as {escaped_col}')
+        # time column is treated as text column in Symon, but if we export snowflake table to parquet directly, it is 
+        # exported as time column with precisions lost. cast to string with time format specified before submitting query
+        elif property_format == 'time':
+            escaped_columns.append(f"TO_VARCHAR({escaped_col}, 'HH24:MI:SS.FF') as {escaped_col}")
+            # escaped_columns.append(f"TIME_FORMAT({escaped_col}, 'HH24:MI:SS') as {escaped_col}")
+        # Symon simply drops timezone info instead of casting to UTC. Snowflake's TO_TIMESTAMP_NTZ also has the same behavior.
+        elif property_format == 'date-time':
+            escaped_columns.append(f'TO_TIMESTAMP_NTZ({escaped_col}) as {escaped_col}')
+            # escaped_columns.append(f'CAST({escaped_col} as TIMESTAMP_NTZ) as {escaped_col}')
+            # escaped_columns.append(f'TO_VARCHAR({escaped_col}) as {escaped_col}')
+        # Symon treats all number type as double.
+        elif data_type == 'number':
+            escaped_columns.append(f'TO_DOUBLE({escaped_col}) as {escaped_col}')
         else:
             escaped_columns.append(escaped_col)
 
@@ -126,65 +142,27 @@ def generate_select_sql(catalog_entry, columns):
     return select_sql
 
 
-def generate_copy_to_s3_sql(s3_loc, catalog_entry, aws_temp_creds):
-    database_name = get_database_name(catalog_entry)
-    schema_name = get_schema_name(catalog_entry)
-    escaped_db = escape(database_name)
-    escaped_schema = escape(schema_name)
-    escaped_table = escape(catalog_entry.table)
-
-
-    s3_url = f"s3://{s3_loc['bucket']}/{s3_loc['key']}/{catalog_entry.table}"
-    credentials_line = f"CREDENTIALS = (AWS_KEY_ID = '{aws_temp_creds['accessKeyID']}', AWS_SECRET_KEY = '{aws_temp_creds['secretKey']}', AWS_TOKEN = '{aws_temp_creds['sessionToken']}')"
+def generate_copy_sql(select_sql, prefix, temp_s3_upload_folder=None, temp_s3_creds=None):
     file_format_line = f"FILE_FORMAT = (TYPE = 'PARQUET')"
-    copy_option_line = f"HEADER = TRUE DETAILED_OUTPUT = TRUE"
+    copy_option_line = f"HEADER = TRUE MAX_FILE_SIZE = {128 * 1024 * 1024} DETAILED_OUTPUT = TRUE"
+
+    # export table to external stage s3
+    if temp_s3_upload_folder is not None and temp_s3_creds is not None:
+        # snowflake addes suffix _x_y_z to the prefix to generate filenames (to ensure distinct filenames across files generated from parallel threads)
+        # e.g. for s3 location below, filename would be <prefix>_0_1_0.snappy.parquet
+        s3_url = f"s3://{temp_s3_upload_folder['bucket']}/{temp_s3_upload_folder['key']}/{prefix}"
+        credentials_line = f"CREDENTIALS = (AWS_KEY_ID = '{temp_s3_creds['accessKeyID']}', AWS_SECRET_KEY = '{temp_s3_creds['secretKey']}', AWS_TOKEN = '{temp_s3_creds['sessionToken']}')"
+        return f"COPY INTO '{s3_url}' FROM ({select_sql}) {credentials_line} {file_format_line} {copy_option_line}"
     
-    copy_sql = f"COPY INTO '{s3_url}' FROM {escaped_db}.{escaped_schema}.{escaped_table} {credentials_line} {file_format_line} {copy_option_line}"
-
-    # escape percent signs
-    copy_sql = copy_sql.replace('%', '%%')
-    return copy_sql
+    # export table to snowflake internal stage. exports files into <user stage>/<prefix> folder with auto-generated filename data_x_y_z.parquet
+    return f"COPY INTO @~/{prefix}/ FROM ({select_sql}) {file_format_line} {copy_option_line}"
 
 
-def generate_copy_to_user_stage_sql(catalog_entry):
-    database_name = get_database_name(catalog_entry)
-    schema_name = get_schema_name(catalog_entry)
-    escaped_db = escape(database_name)
-    escaped_schema = escape(schema_name)
-    escaped_table = escape(catalog_entry.table)
+def upload_file_to_s3(s3_client, file_to_copy, s3_loc):
+    upload_key = f'{s3_loc["key"]}/{os.path.basename(file_to_copy)}'
+    LOGGER.info(f'Uploading file {file_to_copy} to s3://{s3_loc["bucket"]}/{upload_key}')
+    s3_client.upload_file(file_to_copy, s3_loc['bucket'], upload_key)
 
-    file_format_line = f"FILE_FORMAT = (TYPE = 'PARQUET')"
-    copy_option_line = f"HEADER = TRUE DETAILED_OUTPUT = TRUE"
-
-    copy_sql = f"COPY INTO @~/{escaped_table}/ FROM {escaped_db}.{escaped_schema}.{escaped_table} {file_format_line} {copy_option_line}"
-
-    # escape percent signs
-    copy_sql = copy_sql.replace('%', '%%')
-    return copy_sql
-
-
-def generate_list_sql(catalog_entry):
-    escaped_table = escape(catalog_entry.table)
-    list_sql = f"LIST @~/{escaped_table}/"
-
-    # escape percent signs
-    list_sql = list_sql.replace('%', '%%')
-    return list_sql
-
-def generate_get_sql(file_name, working_dir):
-    get_sql = f"GET @~/{file_name} file://{working_dir}/"
-    
-    # escape percent signs
-    get_sql = get_sql.replace('%', '%%')
-    return get_sql
-
-def generate_remove_sql(catalog_entry):
-    escaped_table = escape(catalog_entry.table)
-    remove_sql = f"REMOVE @~/{escaped_table}/"
-
-    # escape percent signs
-    remove_sql = remove_sql.replace('%', '%%')
-    return remove_sql
 
 # pylint: disable=too-many-branches
 def row_to_singer_record(catalog_entry, version, row, columns, time_extracted):
@@ -300,64 +278,14 @@ def whitelist_bookmark_keys(bookmark_key_set, tap_stream_id, state):
                          if non_whitelisted_bookmark_key not in bookmark_key_set]:
         singer.clear_bookmark(state, tap_stream_id, bookmark_key)
 
-# def set_log_level():
-#     for logger_name in ['snowflake.sqlalchemy', 'snowflake.connector', 'botocore']:
-#         logger = logging.getLogger(logger_name)
-#         logger.setLevel(logging.DEBUG)
-#         ch = logging.StreamHandler()
-#         ch.setLevel(logging.DEBUG)
-#         ch.setFormatter(logging.Formatter('%(asctime)s - %(threadName)s - %(filename)s:%(lineno)d - %(funcName)s - %(levelname)s - %(message)s'))
 
-def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version, params, config=None):
+def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version, params):
     """..."""
     replication_key = singer.get_bookmark(state,
                                           catalog_entry.tap_stream_id,
                                           'replication_key')
 
     time_extracted = utils.now()
-
-    if config is not None:
-        result_batch_location = config.get('result_batch_location')
-        index = config.get('index')
-        total_workers = config.get('total_workers')
-    
-    if result_batch_location is not None:
-        s3 = boto3.client('s3')
-        download_filename = f'{uuid4()}'
-        s3.download_file(result_batch_location['bucket'], result_batch_location['key'] + '/importFileCopy/sf_batches', download_filename)
-        batches = pickle.load(open(download_filename, 'rb'))
-
-        rows_saved = 0
-        database_name = get_database_name(catalog_entry)
-        with metrics.record_counter(None) as counter:
-            counter.tags['database'] = database_name
-            counter.tags['table'] = catalog_entry.table
-
-            md_map = metadata.to_map(catalog_entry.metadata)
-            stream_metadata = md_map.get((), {})
-            replication_method = stream_metadata.get('replication-method')
-
-            key_properties = get_key_properties(catalog_entry)
-
-            while index < len(batches):
-                batch = batches[index]
-                LOGGER.info(f'Processing batch {index}: {batch}')
-
-                for row in batch:
-                    counter.increment()
-                    rows_saved += 1
-                    record_message = row_to_singer_record2(catalog_entry,
-                                                        stream_version,
-                                                        row,
-                                                        columns,
-                                                        time_extracted)
-                    singer.write_message(record_message)
-                
-                index += total_workers
-
-            os.remove(download_filename)
-            singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
-            return
 
     LOGGER.info('Running %s', select_sql)
     cursor.execute(select_sql, params)
@@ -422,3 +350,44 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
             row = cursor.fetchone()
 
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
+
+
+def sync_query_parallel(catalog_entry, state, columns, stream_version, config):
+    time_extracted = utils.now()
+
+    # cursor.execute('alter session set ENABLE_UNLOAD_PHYSICAL_TYPE_OPTIMIZATION = true')
+    result_batch_location = config.get('result_batch_location', None)
+    start_index = config.get('start_index', None)
+    total_workers = config.get('total_workers', None)
+    
+    if result_batch_location is not None:
+        s3 = boto3.client('s3')
+        download_filename = f'{uuid4()}'
+        s3.download_file(result_batch_location['bucket'], os.path.join(result_batch_location['key'], RESULT_BATCH_FILENAME), download_filename)
+        batches = pickle.load(open(download_filename, 'rb'))
+
+        rows_saved = 0
+        database_name = get_database_name(catalog_entry)
+        with metrics.record_counter(None) as counter:
+            counter.tags['database'] = database_name
+            counter.tags['table'] = catalog_entry.table
+
+            while start_index < len(batches):
+                batch = batches[start_index]
+                LOGGER.info(f'Processing batch {start_index}: {batch}')
+
+                for row in batch:
+                    counter.increment()
+                    rows_saved += 1
+                    record_message = row_to_singer_record2(catalog_entry,
+                                                        stream_version,
+                                                        row,
+                                                        columns,
+                                                        time_extracted)
+                    singer.write_message(record_message)
+                
+                start_index += total_workers
+
+            os.remove(download_filename)
+            singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
+            return

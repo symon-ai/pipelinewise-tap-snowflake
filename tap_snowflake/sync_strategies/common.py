@@ -10,8 +10,8 @@ import singer
 import singer.metrics as metrics
 from singer import metadata
 from singer import utils
-import logging
 import os
+import shutil
 import pickle
 import boto3
 from uuid import uuid4
@@ -19,6 +19,7 @@ from uuid import uuid4
 LOGGER = singer.get_logger('tap_snowflake')
 
 RESULT_BATCH_FILENAME = 'snowflake_result_batches'
+RESULT_BATCH_METADATA_FILENAME = 'snowflake_result_batches_metadata.json'
 
 def escape(string):
     """Escape strings to be SQL safe"""
@@ -162,6 +163,21 @@ def upload_file_to_s3(s3_client, file_to_copy, s3_loc):
     upload_key = f'{s3_loc["key"]}/{os.path.basename(file_to_copy)}'
     LOGGER.info(f'Uploading file {file_to_copy} to s3://{s3_loc["bucket"]}/{upload_key}')
     s3_client.upload_file(file_to_copy, s3_loc['bucket'], upload_key)
+
+
+def make_directory(directory_name):
+    path = f'{os.getcwd()}/{directory_name}'
+    if not os.path.exists(path):
+        os.mkdir(path)
+    return path
+
+
+def remove_file(file_path):
+    os.remove(file_path)
+
+
+def remove_directory(directory):
+    shutil.rmtree(directory)
 
 
 # pylint: disable=too-many-branches
@@ -358,12 +374,12 @@ def sync_query_parallel(catalog_entry, state, columns, stream_version, config):
     # cursor.execute('alter session set ENABLE_UNLOAD_PHYSICAL_TYPE_OPTIMIZATION = true')
     result_batch_location = config.get('result_batch_location', None)
     start_index = config.get('start_index', None)
-    total_workers = config.get('total_workers', None)
+    jump = config.get('jump', None)
     
     if result_batch_location is not None:
         s3 = boto3.client('s3')
         download_filename = f'{uuid4()}'
-        s3.download_file(result_batch_location['bucket'], os.path.join(result_batch_location['key'], RESULT_BATCH_FILENAME), download_filename)
+        s3.download_file(result_batch_location['bucket'], f"{result_batch_location['key']}/{RESULT_BATCH_FILENAME}", download_filename)
         batches = pickle.load(open(download_filename, 'rb'))
 
         rows_saved = 0
@@ -386,8 +402,8 @@ def sync_query_parallel(catalog_entry, state, columns, stream_version, config):
                                                         time_extracted)
                     singer.write_message(record_message)
                 
-                start_index += total_workers
+                start_index += jump
 
-            os.remove(download_filename)
+            remove_file(download_filename)
             singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
             return

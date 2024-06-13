@@ -9,11 +9,9 @@ import sys
 import logging
 import traceback
 import json
-import os
 from uuid import uuid4
 import time
 import pickle
-import shutil
 
 import singer
 import singer.metrics as metrics
@@ -431,6 +429,7 @@ def write_schema_message(catalog_entry, bookmark_properties=None):
 
 
 def do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_upload_folder):
+    LOGGER.info('Stream %s is using internal unload', catalog_entry.stream)
     with snowflake_conn.connect_with_backoff() as open_conn:
         with open_conn.cursor() as cur:
             # cur.execute('alter session set ENABLE_UNLOAD_PHYSICAL_TYPE_OPTIMIZATION = true')
@@ -441,67 +440,71 @@ def do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_uplo
             prefix = uuid4()
             
             try:
-                # 1. export table to snowflake user stage as parquet files
+                # 1. export table to snowflake user stage under folder <prefix> as parquet files. 
                 select_sql = common.generate_select_sql(catalog_entry, columns)
                 copy_sql = common.generate_copy_sql(select_sql, prefix)
-                LOGGER.info(f'Running COPY query: {copy_sql}')
+                LOGGER.info(f'Running COPY query to export table {catalog_entry.stream} to {prefix} folder in snowflake user stage')
                 cur.execute(copy_sql)
                 copy_results = cur.fetchall()
-                LOGGER.info(f'COPY query result: {copy_results}')
 
-                # 2. list all files written to user stage
+                # 2. list all files written to user stage under folder <prefix>
                 list_sql = f"LIST @~/{prefix}/"
-                LOGGER.info(f'Running LIST query: {list_sql}')
+                LOGGER.info(f'Running LIST query to list files in {prefix} folder in user stage')
                 cur.execute(list_sql)
                 files_in_user_stage = cur.fetchall()
-                LOGGER.info(f'LIST query results: {files_in_user_stage}')
                 
-                # 3. download files to local working directory and move files to s3
-                s3_client = boto3.client('s3')
-                local_working_dir = f'{os.getcwd()}/{prefix}'
+                # 3. download files to local working directory (./<prefix>/) and move files to s3. use the same prefix for local working directory
+                s3_client = boto3.client('s3')                
+                local_working_dir = common.make_directory(prefix)
                 
-                if not os.path.exists(local_working_dir):
-                    os.mkdir(local_working_dir)
-                
+                LOGGER.info(f'Moving files to s3')
                 for file_info in files_in_user_stage:
+                    # filename is the filename in snowflake user stage, which includes folder path in the filename. since we created 
+                    # local working directory using the same prefix used in snowflake's user stage, we can reuse the filename to clean up 
+                    # local working directory
                     filename = file_info[0]
                     get_sql = f"GET @~/{filename} file://{local_working_dir}/"
-
-                    LOGGER.info(f'Running GET query: {get_sql}')
                     cur.execute(get_sql)
-                    downloaded_filename = cur.fetchall()[0][0]
-                    common.upload_file_to_s3(s3_client, os.path.join(local_working_dir, downloaded_filename), temp_s3_upload_folder)
-                    os.remove(filename)
+
+                    common.upload_file_to_s3(s3_client, filename, temp_s3_upload_folder)
+                    common.remove_file(filename)
+                
+                # log rows processed for Symon import progress bar update. For unloading, we do not use target so using print should be fine. 
+                # logger logs prefix info, which fails to parsed as Symon progress message
+                total_rows_processed = sum([copy_result[2] for copy_result in copy_results])
+                print(json.dumps({'newRowsProcessed': total_rows_processed}))
             finally:
                 try:
                     # remove files from snowflake user stage
                     remove_sql = f"REMOVE @~/{prefix}/"
-                    LOGGER.info(f'Running REMOVE query: {remove_sql}')
+                    LOGGER.info(f'Running REMOVE query to clean up {prefix} folder in user stage')
                     cur.execute(remove_sql)
-                    results = cur.fetchall()
-                    LOGGER.info(f'REMOVE query results: {results}')
-                    shutil.rmtree(local_working_dir)
+                    LOGGER.info(f'Cleaning up local working directory {local_working_dir}')
+                    common.remove_directory(local_working_dir)
                 except:
                     pass
 
 
 def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_creds, temp_s3_upload_folder):
-    LOGGER.info(f'Unloading data to S3 for stream {catalog_entry.stream}')
+    LOGGER.info('Stream %s is using external unload', catalog_entry.stream)
     with snowflake_conn.connect_with_backoff() as open_conn:
         with open_conn.cursor() as cur:
             select_sql = common.generate_select_sql(catalog_entry, columns)
+            # random filename to use for parquet files exported to s3
             prefix = uuid4()
             copy_sql = common.generate_copy_sql(select_sql, prefix, temp_s3_upload_folder, temp_s3_creds)
 
-            LOGGER.info(f'Running COPY query: {copy_sql}')
+            LOGGER.info(f'Running COPY query to export table {catalog_entry.stream} to S3')
             cur.execute(copy_sql)
-            results = cur.fetchall()
-            LOGGER.info(f'COPY query result: {results}')
+            copy_results = cur.fetchall()
+            # log rows processed for Symon import progress bar update. For unloading, we do not use target so using print should be fine. 
+            # logger logs prefix info, which fails to parsed as Symon progress message
+            total_rows_processed = sum([copy_result[2] for copy_result in copy_results])
+            print(json.dumps({'newRowsProcessed': total_rows_processed}))
 
 
 def do_sync_incremental(snowflake_conn, catalog_entry, state, columns):
-    LOGGER.info('Stream %s is using incremental replication',
-                catalog_entry.stream)
+    LOGGER.info('Stream %s is using incremental replication', catalog_entry.stream)
 
     md_map = metadata.to_map(catalog_entry.metadata)
     replication_key = md_map.get((), {}).get('replication-key')
@@ -519,8 +522,7 @@ def do_sync_incremental(snowflake_conn, catalog_entry, state, columns):
 
 
 def do_sync_full_table(snowflake_conn, catalog_entry, state, columns, config):
-    LOGGER.info('Stream %s is using full table replication',
-                catalog_entry.stream)
+    LOGGER.info('Stream %s is using full table replication', catalog_entry.stream)
 
     write_schema_message(catalog_entry)
 
@@ -541,15 +543,15 @@ def do_sync_full_table(snowflake_conn, catalog_entry, state, columns, config):
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
 def do_sync_full_table_parallel(snowflake_conn, catalog_entry, state, columns, config):
-    LOGGER.info('Stream %s is using full table replication',
+    LOGGER.info('Stream %s is using full table replication in parallel',
                 catalog_entry.stream)
     
     result_batch_location = config.get('result_batch_location', None)
     start_index = config.get('start_index', None)
-    total_workers = config.get('total_workers', None)
+    jump = config.get('jump', None)
 
     if result_batch_location is None:
-        raise Exception('No result_batch_location provided in config')
+        raise Exception('Missing config: result_batch_location')
 
     # For parallel import, we call do_sync_full_table_parallel twice:
     # 1. first to submit sql query and write ResultBatch objects to s3 that could be used to fetch rows from
@@ -557,7 +559,8 @@ def do_sync_full_table_parallel(snowflake_conn, catalog_entry, state, columns, c
     # only one of the two should be executed at a time
     
     # first call, query hasn't been executed. submit query and write ResultBatch objects to s3
-    if start_index is None and total_workers is None:
+    if start_index is None and jump is None:
+        LOGGER.info('Submitting query to snowflake and writing ResultBatch objects to s3')
         with snowflake_conn.connect_with_backoff() as open_conn:
             with open_conn.cursor() as cur:
                 select_sql = common.generate_select_sql(catalog_entry, columns)
@@ -566,25 +569,36 @@ def do_sync_full_table_parallel(snowflake_conn, catalog_entry, state, columns, c
 
                 batches = cur.get_result_batches()
                 batches.sort(key=lambda x: x.uncompressed_size if x.uncompressed_size is not None else 0)
-                LOGGER.info(f'Sorted batches: {batches}')
+                # metadata to be used when determining number of parallel splits for Symon import
+                batch_metadata = {
+                    'totalBatchCount': len(batches),
+                    'totalUncompressedSize': sum([x.uncompressed_size for x in batches if x.uncompressed_size is not None]),
+                    'totalCompressedSize': sum([x.compressed_size for x in batches if x.compressed_size is not None]),
+                    'totalRowCount': sum([x.rowcount for x in batches if x.rowcount is not None]),
+                    'totalColumnCount': len(columns)
+                }
                 
-                local_working_dir = f'{os.getcwd()}/{uuid4()}'
                 try:
-                    if not os.path.exists(local_working_dir):
-                        os.mkdir(local_working_dir)
+                    local_working_dir = common.make_directory(uuid4())
                     
-                    file_path = os.path.join(local_working_dir, common.RESULT_BATCH_FILENAME)
-                    pickle.dump(batches, open(file_path, 'wb'))
+                    # file_path = os.path.join(local_working_dir, common.RESULT_BATCH_FILENAME)
+                    result_batch_file_path = f'{local_working_dir}/{common.RESULT_BATCH_FILENAME}'
+                    pickle.dump(batches, open(result_batch_file_path, 'wb'))
+
+                    result_batch_metadata_file_path = f'{local_working_dir}/{common.RESULT_BATCH_METADATA_FILENAME}'
+                    json.dump(batch_metadata, open(result_batch_metadata_file_path, 'w'))
 
                     s3_client = boto3.client('s3')
-                    common.upload_file_to_s3(s3_client, file_path, result_batch_location)
+                    common.upload_file_to_s3(s3_client, result_batch_file_path, result_batch_location)
+                    common.upload_file_to_s3(s3_client, result_batch_metadata_file_path, result_batch_location)
                 finally:
                     try:
-                        shutil.rmtree(local_working_dir)
+                        common.remove_directory(local_working_dir)
                     except:
                         pass
         return
     
+    LOGGER.info('Syncing in parallel using ResultBatch')
     # second call, query has been executed in prev call, read ResultBatch objects from s3 and sync in parallel
     write_schema_message(catalog_entry)
 

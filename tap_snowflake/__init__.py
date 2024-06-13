@@ -106,7 +106,7 @@ def schema_for_column(c):
         result.type = ['null', 'string']
         result.format = 'time'
 
-    elif data_type in BINARY_TYPE: # done - fail
+    elif data_type in BINARY_TYPE: # done - unsupported in target
         result.type = ['null', 'string']
         result.format = 'binary'
 
@@ -114,7 +114,7 @@ def schema_for_column(c):
         result.type = ['null', 'string']
         result.format = 'semi_structured'
 
-    elif data_type in GEOGRAPHY_TYPE: # done - fail
+    elif data_type in GEOGRAPHY_TYPE: # done - unsupported in target
         result.type = ['null', 'string']
         result.format = 'geography'
 
@@ -436,12 +436,12 @@ def do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_uplo
             # result = cur.fetchall()
             # LOGGER.info(f'ALTER SESSION result: {result}')
             
-            # prefix (subdirectory) to use for exporting table to snowflake user stage + downloading to local
+            # prefix (folder name) to use for exporting table to snowflake user stage + downloading to local
             prefix = uuid4()
             
             try:
                 # 1. export table to snowflake user stage under folder <prefix> as parquet files. 
-                select_sql = common.generate_select_sql(catalog_entry, columns)
+                select_sql = common.generate_select_sql(catalog_entry, columns, True)
                 copy_sql = common.generate_copy_sql(select_sql, prefix)
                 LOGGER.info(f'Running COPY query to export table {catalog_entry.stream} to {prefix} folder in snowflake user stage')
                 cur.execute(copy_sql)
@@ -470,7 +470,7 @@ def do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_uplo
                     common.remove_file(filename)
                 
                 # log rows processed for Symon import progress bar update. For unloading, we do not use target so using print should be fine. 
-                # logger logs prefix info, which fails to parsed as Symon progress message
+                # logger logs prefix info, which fails to parse as Symon progress message
                 total_rows_processed = sum([copy_result[2] for copy_result in copy_results])
                 print(json.dumps({'newRowsProcessed': total_rows_processed}))
             finally:
@@ -489,7 +489,7 @@ def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_cred
     LOGGER.info('Stream %s is using external unload', catalog_entry.stream)
     with snowflake_conn.connect_with_backoff() as open_conn:
         with open_conn.cursor() as cur:
-            select_sql = common.generate_select_sql(catalog_entry, columns)
+            select_sql = common.generate_select_sql(catalog_entry, columns, True)
             # random filename to use for parquet files exported to s3
             prefix = uuid4()
             copy_sql = common.generate_copy_sql(select_sql, prefix, temp_s3_upload_folder, temp_s3_creds)
@@ -498,7 +498,7 @@ def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_cred
             cur.execute(copy_sql)
             copy_results = cur.fetchall()
             # log rows processed for Symon import progress bar update. For unloading, we do not use target so using print should be fine. 
-            # logger logs prefix info, which fails to parsed as Symon progress message
+            # logger logs prefix info, which fails to parse as Symon progress message
             total_rows_processed = sum([copy_result[2] for copy_result in copy_results])
             print(json.dumps({'newRowsProcessed': total_rows_processed}))
 

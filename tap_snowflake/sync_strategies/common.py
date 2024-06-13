@@ -97,7 +97,7 @@ def get_key_properties(catalog_entry):
     return key_properties
 
 
-def generate_select_sql(catalog_entry, columns):
+def generate_select_sql(catalog_entry, columns, used_unload=False):
     """Generate SQL to extract data froom snowflake"""
     database_name = get_database_name(catalog_entry)
     schema_name = get_schema_name(catalog_entry)
@@ -122,16 +122,14 @@ def generate_select_sql(catalog_entry, columns):
             escaped_columns.append(f'ST_ASTEXT({escaped_col}) as {escaped_col}')
         # time column is treated as text column in Symon, but if we export snowflake table to parquet directly, it is 
         # exported as time column with precisions lost. cast to string with time format specified before submitting query
-        elif property_format == 'time':
+        elif used_unload and property_format == 'time':
             escaped_columns.append(f"TO_VARCHAR({escaped_col}, 'HH24:MI:SS.FF') as {escaped_col}")
-            # escaped_columns.append(f"TIME_FORMAT({escaped_col}, 'HH24:MI:SS') as {escaped_col}")
         # Symon simply drops timezone info instead of casting to UTC. Snowflake's TO_TIMESTAMP_NTZ also has the same behavior.
-        elif property_format == 'date-time':
+        elif used_unload and property_format == 'date-time':
             escaped_columns.append(f'TO_TIMESTAMP_NTZ({escaped_col}) as {escaped_col}')
-            # escaped_columns.append(f'CAST({escaped_col} as TIMESTAMP_NTZ) as {escaped_col}')
             # escaped_columns.append(f'TO_VARCHAR({escaped_col}) as {escaped_col}')
         # Symon treats all number type as double.
-        elif data_type == 'number':
+        elif used_unload and data_type == 'number':
             escaped_columns.append(f'TO_DOUBLE({escaped_col}) as {escaped_col}')
         else:
             escaped_columns.append(escaped_col)

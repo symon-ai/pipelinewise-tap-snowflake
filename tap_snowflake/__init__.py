@@ -432,10 +432,7 @@ def do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_uplo
     LOGGER.info('Stream %s is using internal unload', catalog_entry.stream)
     with snowflake_conn.connect_with_backoff() as open_conn:
         with open_conn.cursor() as cur:
-            # cur.execute('alter session set ENABLE_UNLOAD_PHYSICAL_TYPE_OPTIMIZATION = true')
-            # result = cur.fetchall()
-            # LOGGER.info(f'ALTER SESSION result: {result}')
-            
+            cur.execute('ALTER SESSION SET ENABLE_UNLOAD_PHYSICAL_TYPE_OPTIMIZATION = FALSE')
             # prefix (folder name) to use for exporting table to snowflake user stage + downloading to local
             prefix = uuid4()
             
@@ -489,6 +486,7 @@ def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_cred
     LOGGER.info('Stream %s is using external unload', catalog_entry.stream)
     with snowflake_conn.connect_with_backoff() as open_conn:
         with open_conn.cursor() as cur:
+            cur.execute('ALTER SESSION SET ENABLE_UNLOAD_PHYSICAL_TYPE_OPTIMIZATION = FALSE')
             select_sql = common.generate_select_sql(catalog_entry, columns, True)
             # random filename to use for parquet files exported to s3
             prefix = uuid4()
@@ -530,7 +528,7 @@ def do_sync_full_table(snowflake_conn, catalog_entry, state, columns, config):
         catalog_entry.tap_stream_id, state)
 
     full_table.sync_table(snowflake_conn, catalog_entry,
-                          state, columns, stream_version, config)
+                          state, columns, stream_version)
 
     # Prefer initial_full_table_complete going forward
     singer.clear_bookmark(state, catalog_entry.tap_stream_id, 'version')

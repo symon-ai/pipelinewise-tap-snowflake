@@ -439,10 +439,15 @@ def do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_uplo
             try:
                 # 1. export table to snowflake user stage under folder <prefix> as parquet files. 
                 select_sql = common.generate_select_sql(catalog_entry, columns, True)
+                LOGGER.info(f'Running {select_sql}')
                 copy_sql = common.generate_copy_sql(select_sql, prefix)
                 LOGGER.info(f'Running COPY query to export table {catalog_entry.stream} to {prefix} folder in snowflake user stage')
                 cur.execute(copy_sql)
                 copy_results = cur.fetchall()
+
+                # table is empty, raise error
+                if len(copy_results) == 0:
+                    raise SymonException('Table is empty', 'snowflake.SnowflakeClientError')
 
                 # 2. list all files written to user stage under folder <prefix>
                 list_sql = f"LIST @~/{prefix}/"
@@ -488,6 +493,7 @@ def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_cred
         with open_conn.cursor() as cur:
             cur.execute('ALTER SESSION SET ENABLE_UNLOAD_PHYSICAL_TYPE_OPTIMIZATION = FALSE')
             select_sql = common.generate_select_sql(catalog_entry, columns, True)
+            LOGGER.info(f'Running {select_sql}')
             # random filename to use for parquet files exported to s3
             prefix = uuid4()
             copy_sql = common.generate_copy_sql(select_sql, prefix, temp_s3_upload_folder, temp_s3_creds)
@@ -495,6 +501,11 @@ def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_cred
             LOGGER.info(f'Running COPY query to export table {catalog_entry.stream} to S3')
             cur.execute(copy_sql)
             copy_results = cur.fetchall()
+
+            # table is empty, raise error
+            if len(copy_results) == 0:
+                raise SymonException('Table is empty', 'snowflake.SnowflakeClientError')
+
             # log rows processed for Symon import progress bar update. For unloading, we do not use target so using print should be fine. 
             # logger logs prefix info, which fails to parse as Symon progress message
             total_rows_processed = sum([copy_result[2] for copy_result in copy_results])

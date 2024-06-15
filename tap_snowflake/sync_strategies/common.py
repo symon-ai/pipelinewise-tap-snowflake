@@ -15,6 +15,7 @@ import shutil
 import pickle
 import boto3
 from uuid import uuid4
+from tap_snowflake.symon_exception import SymonException
 
 LOGGER = singer.get_logger('tap_snowflake')
 
@@ -293,7 +294,7 @@ def whitelist_bookmark_keys(bookmark_key_set, tap_stream_id, state):
         singer.clear_bookmark(state, tap_stream_id, bookmark_key)
 
 
-def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version, params):
+def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version, params, is_full_table=False):
     """..."""
     replication_key = singer.get_bookmark(state,
                                           catalog_entry.tap_stream_id,
@@ -362,6 +363,8 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
             #     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
             row = cursor.fetchone()
+        if rows_saved == 0 and is_full_table:
+            raise SymonException('No data available.', 'snowflake.SnowflakeClientError')
 
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 

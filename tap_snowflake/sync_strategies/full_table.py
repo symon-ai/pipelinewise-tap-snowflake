@@ -112,7 +112,8 @@ def sync_table(snowflake_conn, catalog_entry, state, columns, stream_version, is
                                 select_sql,
                                 columns,
                                 stream_version,
-                                params)
+                                params,
+                                True)
 
     # clear max pk value and last pk fetched upon successful sync
     singer.clear_bookmark(state, catalog_entry.tap_stream_id, 'max_pk_values')

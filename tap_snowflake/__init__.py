@@ -447,7 +447,7 @@ def do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_uplo
 
                 # table is empty, raise error
                 if len(copy_results) == 0:
-                    raise SymonException('Table is empty', 'snowflake.SnowflakeClientError')
+                    raise SymonException('No data available.', 'snowflake.SnowflakeClientError')
 
                 # 2. list all files written to user stage under folder <prefix>
                 list_sql = f"LIST @~/{prefix}/"
@@ -504,7 +504,7 @@ def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_cred
 
             # table is empty, raise error
             if len(copy_results) == 0:
-                raise SymonException('Table is empty', 'snowflake.SnowflakeClientError')
+                raise SymonException('No data available.', 'snowflake.SnowflakeClientError')
 
             # log rows processed for Symon import progress bar update. For unloading, we do not use target so using print should be fine. 
             # logger logs prefix info, which fails to parse as Symon progress message

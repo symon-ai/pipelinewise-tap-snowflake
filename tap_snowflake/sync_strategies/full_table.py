@@ -94,12 +94,8 @@ def sync_table(snowflake_conn, catalog_entry, state, columns, stream_version, is
     if not initial_full_table_complete and not (version_exists and state_version is None):
         singer.write_message(activate_version_message)
     
-    if is_parallel_import:
-        if config is None:
-            raise Exception('Config is required for parallel import')
-        
+    if is_parallel_import and config is not None:
         common.sync_query_parallel(catalog_entry, state, columns, stream_version, config)
-    
     else:
         with snowflake_conn.connect_with_backoff() as open_conn:
             with open_conn.cursor() as cur:

@@ -376,35 +376,36 @@ def sync_query_parallel(catalog_entry, state, columns, stream_version, config):
     result_batch_location = config.get('result_batch_location', None)
     start_index = config.get('start_index', None)
     jump = config.get('jump', None)
-    
-    if result_batch_location is not None:
-        s3 = boto3.client('s3')
-        download_filename = f'{uuid4()}'
-        s3.download_file(result_batch_location['bucket'], f"{result_batch_location['key']}/{RESULT_BATCH_FILENAME}", download_filename)
-        batches = pickle.load(open(download_filename, 'rb'))
 
-        rows_saved = 0
-        database_name = get_database_name(catalog_entry)
-        with metrics.record_counter(None) as counter:
-            counter.tags['database'] = database_name
-            counter.tags['table'] = catalog_entry.table
+    if result_batch_location is None or start_index is None or jump is None:
+        raise Exception('Missing configs for parallel import: result_batch_location, start_index, jump required.')
 
-            while start_index < len(batches):
-                batch = batches[start_index]
-                LOGGER.info(f'Processing batch {start_index}: {batch}')
+    s3 = boto3.client('s3')
+    download_filename = f'{uuid4()}'
+    s3.download_file(result_batch_location['bucket'], f"{result_batch_location['key']}/{RESULT_BATCH_FILENAME}", download_filename)
+    batches = pickle.load(open(download_filename, 'rb'))
 
-                for row in batch:
-                    counter.increment()
-                    rows_saved += 1
-                    record_message = row_to_singer_record2(catalog_entry,
-                                                        stream_version,
-                                                        row,
-                                                        columns,
-                                                        time_extracted)
-                    singer.write_message(record_message)
-                
-                start_index += jump
+    rows_saved = 0
+    database_name = get_database_name(catalog_entry)
+    with metrics.record_counter(None) as counter:
+        counter.tags['database'] = database_name
+        counter.tags['table'] = catalog_entry.table
 
-            remove_file(download_filename)
-            singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
-            return
+        while start_index < len(batches):
+            batch = batches[start_index]
+            LOGGER.info(f'Processing batch {start_index}: {batch}')
+
+            for row in batch:
+                counter.increment()
+                rows_saved += 1
+                record_message = row_to_singer_record2(catalog_entry,
+                                                    stream_version,
+                                                    row,
+                                                    columns,
+                                                    time_extracted)
+                singer.write_message(record_message)
+            
+            start_index += jump
+
+    remove_file(download_filename)
+    singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))

@@ -439,7 +439,7 @@ def do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_uplo
             try:
                 # 1. export table to snowflake user stage under folder <prefix> as parquet files. 
                 select_sql = common.generate_select_sql(catalog_entry, columns, True)
-                LOGGER.info(f'Running {select_sql}')
+                LOGGER.info(f'Select query: {select_sql}')
                 copy_sql = common.generate_copy_sql(select_sql, prefix)
                 LOGGER.info(f'Running COPY query to export table {catalog_entry.stream} to {prefix} folder in snowflake user stage')
                 cur.execute(copy_sql)
@@ -470,14 +470,23 @@ def do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_uplo
 
                     common.upload_file_to_s3(s3_client, filename, temp_s3_upload_folder)
                     common.remove_file(filename)
+                    
+                    # remove processed file from snowflake's user stage
+                    remove_file_sql = f"REMOVE @~/{filename}"
+                    cur.execute(remove_file_sql)
                 
-                # log rows processed for Symon import progress bar update. For unloading, we do not use target so using print should be fine. 
-                # logger logs prefix info, which fails to parse as Symon progress message
-                total_rows_processed = sum([copy_result[2] for copy_result in copy_results])
-                print(json.dumps({'newRowsProcessed': total_rows_processed}))
+                # log import result
+                total_bytes_processed = 0
+                total_rows_processed = 0
+                total_files_processed = len(copy_results)
+                for res in copy_results:
+                    total_bytes_processed += res[1]
+                    total_rows_processed += res[2]
+                
+                LOGGER.info(f'{catalog_entry.stream} import using internal unload finished: {total_rows_processed} rows were imported as {total_files_processed} files with total of {total_bytes_processed} bytes.')
             finally:
                 try:
-                    # remove files from snowflake user stage
+                    # clean up, remove files from snowflake user stage
                     remove_sql = f"REMOVE @~/{prefix}/"
                     LOGGER.info(f'Running REMOVE query to clean up {prefix} folder in user stage')
                     cur.execute(remove_sql)
@@ -493,7 +502,7 @@ def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_cred
         with open_conn.cursor() as cur:
             cur.execute('ALTER SESSION SET ENABLE_UNLOAD_PHYSICAL_TYPE_OPTIMIZATION = FALSE')
             select_sql = common.generate_select_sql(catalog_entry, columns, True)
-            LOGGER.info(f'Running {select_sql}')
+            LOGGER.info(f'Select query: {select_sql}')
             # random filename to use for parquet files exported to s3
             prefix = uuid4()
             copy_sql = common.generate_copy_sql(select_sql, prefix, temp_s3_upload_folder, temp_s3_creds)
@@ -506,10 +515,15 @@ def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_cred
             if len(copy_results) == 0:
                 raise SymonException('No data available.', 'snowflake.SnowflakeClientError')
 
-            # log rows processed for Symon import progress bar update. For unloading, we do not use target so using print should be fine. 
-            # logger logs prefix info, which fails to parse as Symon progress message
-            total_rows_processed = sum([copy_result[2] for copy_result in copy_results])
-            print(json.dumps({'newRowsProcessed': total_rows_processed}))
+            # log import result
+            total_bytes_processed = 0
+            total_rows_processed = 0
+            total_files_processed = len(copy_results)
+            for res in copy_results:
+                total_bytes_processed += res[1]
+                total_rows_processed += res[2]
+            
+            LOGGER.info(f'{catalog_entry.stream} import using external unload finished: {total_rows_processed} rows were imported as {total_files_processed} files with total of {total_bytes_processed} bytes.')
 
 
 def do_sync_incremental(snowflake_conn, catalog_entry, state, columns):

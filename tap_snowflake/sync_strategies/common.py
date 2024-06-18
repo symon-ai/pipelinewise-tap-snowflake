@@ -363,8 +363,12 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
             #     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
             row = cursor.fetchone()
-        if rows_saved == 0 and is_full_table:
-            raise SymonException('No data available.', 'snowflake.SnowflakeClientError')
+
+    # do_sync_external_unload, do_sync_internal_unload makes snowflake export table as parquet file.
+    # if table is empty, snowflake exports no file and we raise an error. raise same error for normal 
+    # sync for consistency.
+    if rows_saved == 0 and is_full_table:
+        raise SymonException('No data available.', 'snowflake.SnowflakeClientError')
 
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 

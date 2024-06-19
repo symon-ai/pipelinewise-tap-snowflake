@@ -115,10 +115,10 @@ def generate_select_sql(catalog_entry, columns):
         data_type = catalog_entry.schema.properties[col_name].type[1]
 
         # if the column format is binary, fetch the hexified value
-        if property_format == 'semi_structured':
-            escaped_columns.append(f'TO_VARCHAR({escaped_col}) as {escaped_col}')
-        elif property_format == 'binary':
+        if property_format == 'binary':
             escaped_columns.append(f'hex_encode({escaped_col}) as {escaped_col}')
+        elif property_format == 'semi_structured':
+            escaped_columns.append(f'TO_VARCHAR({escaped_col}) as {escaped_col}')
         elif property_format == 'geography':
             escaped_columns.append(f'ST_ASTEXT({escaped_col}) as {escaped_col}')
         # Castings below were added for WP-21311 to make sure that Snowflake import using s3 unload sync vs regular sync 

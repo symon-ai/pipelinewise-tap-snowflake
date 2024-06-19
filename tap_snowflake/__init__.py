@@ -82,31 +82,31 @@ def schema_for_column(c):
     inclusion = 'available'
     result = Schema(inclusion=inclusion)
 
-    if data_type == 'boolean': # done
+    if data_type == 'boolean':
         result.type = ['null', 'boolean']
 
-    elif data_type in INTEGER_TYPES: # done
+    elif data_type in INTEGER_TYPES:
         result.type = ['null', 'number']
 
-    elif data_type in FLOAT_TYPES: # done
+    elif data_type in FLOAT_TYPES:
         result.type = ['null', 'number']
 
-    elif data_type in NUMBER_TYPES: # done
+    elif data_type in NUMBER_TYPES:
         result.type = ['null', 'number']
 
-    elif data_type in STRING_TYPES: # done
+    elif data_type in STRING_TYPES:
         result.type = ['null', 'string']
         result.maxLength = c.character_maximum_length
 
-    elif data_type in DATETIME_TYPES: # done
+    elif data_type in DATETIME_TYPES:
         result.type = ['null', 'string']
         result.format = 'date-time'
 
-    elif data_type == 'time': # done
+    elif data_type == 'time':
         result.type = ['null', 'string']
         result.format = 'time'
 
-    elif data_type in BINARY_TYPE: # done - unsupported in target
+    elif data_type in BINARY_TYPE:
         result.type = ['null', 'string']
         result.format = 'binary'
 
@@ -114,7 +114,7 @@ def schema_for_column(c):
         result.type = ['null', 'string']
         result.format = 'semi_structured'
 
-    elif data_type in GEOGRAPHY_TYPE: # done - unsupported in target
+    elif data_type in GEOGRAPHY_TYPE:
         result.type = ['null', 'string']
         result.format = 'geography'
 

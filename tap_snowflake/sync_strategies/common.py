@@ -98,7 +98,7 @@ def get_key_properties(catalog_entry):
     return key_properties
 
 
-def generate_select_sql(catalog_entry, columns, used_unload=False):
+def generate_select_sql(catalog_entry, columns):
     """Generate SQL to extract data froom snowflake"""
     database_name = get_database_name(catalog_entry)
     schema_name = get_schema_name(catalog_entry)
@@ -121,16 +121,15 @@ def generate_select_sql(catalog_entry, columns, used_unload=False):
             escaped_columns.append(f'hex_encode({escaped_col}) as {escaped_col}')
         elif property_format == 'geography':
             escaped_columns.append(f'ST_ASTEXT({escaped_col}) as {escaped_col}')
-        # time column is treated as text column in Symon, but if we export snowflake table to parquet directly, it is 
-        # exported as time column with precisions lost. cast to string with time format specified before submitting query
-        elif used_unload and property_format == 'time':
-            escaped_columns.append(f"TO_VARCHAR({escaped_col}, 'HH24:MI:SS.FF') as {escaped_col}")
+        # Castings below were added for WP-21311 to make sure that Snowflake import using s3 unload sync vs regular sync 
+        # uses the same select query.
+        elif property_format == 'time':
+            escaped_columns.append(f"TO_VARCHAR({escaped_col}, 'HH24:MI:SS.FF6') as {escaped_col}")
         # Symon simply drops timezone info instead of casting to UTC. Snowflake's TO_TIMESTAMP_NTZ also has the same behavior.
-        elif used_unload and property_format == 'date-time':
+        elif property_format == 'date-time':
             escaped_columns.append(f'TO_TIMESTAMP_NTZ({escaped_col}) as {escaped_col}')
-            # escaped_columns.append(f'TO_VARCHAR({escaped_col}) as {escaped_col}')
         # Symon treats all number type as double.
-        elif used_unload and data_type == 'number':
+        elif data_type == 'number':
             escaped_columns.append(f'TO_DOUBLE({escaped_col}) as {escaped_col}')
         else:
             escaped_columns.append(escaped_col)
@@ -158,25 +157,26 @@ def generate_copy_sql(select_sql, prefix, temp_s3_upload_folder=None, temp_s3_cr
     return f"COPY INTO @~/{prefix}/ FROM ({select_sql}) {file_format_line} {copy_option_line}"
 
 
-def upload_file_to_s3(s3_client, file_to_copy, s3_loc):
-    upload_key = f'{s3_loc["key"]}/{os.path.basename(file_to_copy)}'
-    LOGGER.info(f'Uploading file {file_to_copy} to s3://{s3_loc["bucket"]}/{upload_key}')
-    s3_client.upload_file(file_to_copy, s3_loc['bucket'], upload_key)
+# TODO: Commenting out for now as they are not for coming release 3.49.0/3.50.0
+#  def upload_file_to_s3(s3_client, file_to_copy, s3_loc):
+#     upload_key = f'{s3_loc["key"]}/{os.path.basename(file_to_copy)}'
+#     LOGGER.info(f'Uploading file {file_to_copy} to s3://{s3_loc["bucket"]}/{upload_key}')
+#     s3_client.upload_file(file_to_copy, s3_loc['bucket'], upload_key)
 
 
-def make_directory(directory_name):
-    path = f'{os.getcwd()}/{directory_name}'
-    if not os.path.exists(path):
-        os.mkdir(path)
-    return path
+# def make_directory(directory_name):
+#     path = f'{os.getcwd()}/{directory_name}'
+#     if not os.path.exists(path):
+#         os.mkdir(path)
+#     return path
 
 
-def remove_file(file_path):
-    os.remove(file_path)
+# def remove_file(file_path):
+#     os.remove(file_path)
 
 
-def remove_directory(directory):
-    shutil.rmtree(directory)
+# def remove_directory(directory):
+#     shutil.rmtree(directory)
 
 
 # pylint: disable=too-many-branches
@@ -373,43 +373,44 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
 
-def sync_query_parallel(catalog_entry, state, columns, stream_version, config):
-    time_extracted = utils.now()
+# TODO: Commenting out for now as they are not for coming release 3.49.0/3.50.0
+# def sync_query_parallel(catalog_entry, state, columns, stream_version, config):
+#     time_extracted = utils.now()
 
-    # cursor.execute('alter session set ENABLE_UNLOAD_PHYSICAL_TYPE_OPTIMIZATION = true')
-    result_batch_location = config.get('result_batch_location', None)
-    start_index = config.get('start_index', None)
-    jump = config.get('jump', None)
+#     # cursor.execute('alter session set ENABLE_UNLOAD_PHYSICAL_TYPE_OPTIMIZATION = true')
+#     result_batch_location = config.get('result_batch_location', None)
+#     start_index = config.get('start_index', None)
+#     jump = config.get('jump', None)
 
-    if result_batch_location is None or start_index is None or jump is None:
-        raise Exception('Missing configs for parallel import: result_batch_location, start_index, jump required.')
+#     if result_batch_location is None or start_index is None or jump is None:
+#         raise Exception('Missing configs for parallel import: result_batch_location, start_index, jump required.')
 
-    s3 = boto3.client('s3')
-    download_filename = f'{uuid4()}'
-    s3.download_file(result_batch_location['bucket'], f"{result_batch_location['key']}/{RESULT_BATCH_FILENAME}", download_filename)
-    batches = pickle.load(open(download_filename, 'rb'))
+#     s3 = boto3.client('s3')
+#     download_filename = f'{uuid4()}'
+#     s3.download_file(result_batch_location['bucket'], f"{result_batch_location['key']}/{RESULT_BATCH_FILENAME}", download_filename)
+#     batches = pickle.load(open(download_filename, 'rb'))
 
-    rows_saved = 0
-    database_name = get_database_name(catalog_entry)
-    with metrics.record_counter(None) as counter:
-        counter.tags['database'] = database_name
-        counter.tags['table'] = catalog_entry.table
+#     rows_saved = 0
+#     database_name = get_database_name(catalog_entry)
+#     with metrics.record_counter(None) as counter:
+#         counter.tags['database'] = database_name
+#         counter.tags['table'] = catalog_entry.table
 
-        while start_index < len(batches):
-            batch = batches[start_index]
-            LOGGER.info(f'Processing batch {start_index}: {batch}')
+#         while start_index < len(batches):
+#             batch = batches[start_index]
+#             LOGGER.info(f'Processing batch {start_index}: {batch}')
 
-            for row in batch:
-                counter.increment()
-                rows_saved += 1
-                record_message = row_to_singer_record2(catalog_entry,
-                                                    stream_version,
-                                                    row,
-                                                    columns,
-                                                    time_extracted)
-                singer.write_message(record_message)
+#             for row in batch:
+#                 counter.increment()
+#                 rows_saved += 1
+#                 record_message = row_to_singer_record2(catalog_entry,
+#                                                     stream_version,
+#                                                     row,
+#                                                     columns,
+#                                                     time_extracted)
+#                 singer.write_message(record_message)
             
-            start_index += jump
+#             start_index += jump
 
-    remove_file(download_filename)
-    singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
+#     remove_file(download_filename)
+#     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))

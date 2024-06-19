@@ -94,22 +94,23 @@ def sync_table(snowflake_conn, catalog_entry, state, columns, stream_version, is
     if not initial_full_table_complete and not (version_exists and state_version is None):
         singer.write_message(activate_version_message)
     
-    if is_parallel_import and config is not None:
-        common.sync_query_parallel(catalog_entry, state, columns, stream_version, config)
-    else:
-        with snowflake_conn.connect_with_backoff() as open_conn:
-            with open_conn.cursor() as cur:
-                select_sql = common.generate_select_sql(catalog_entry, columns)
-                params = {}
+    # TODO: Commenting out for now as they are not for coming release 3.49.0/3.50.0
+    # if is_parallel_import and config is not None:
+    #     common.sync_query_parallel(catalog_entry, state, columns, stream_version, config)
+    # else:
+    with snowflake_conn.connect_with_backoff() as open_conn:
+        with open_conn.cursor() as cur:
+            select_sql = common.generate_select_sql(catalog_entry, columns)
+            params = {}
 
-                common.sync_query(cur,
-                                catalog_entry,
-                                state,
-                                select_sql,
-                                columns,
-                                stream_version,
-                                params,
-                                True)
+            common.sync_query(cur,
+                            catalog_entry,
+                            state,
+                            select_sql,
+                            columns,
+                            stream_version,
+                            params,
+                            True)
 
     # clear max pk value and last pk fetched upon successful sync
     singer.clear_bookmark(state, catalog_entry.tap_stream_id, 'max_pk_values')

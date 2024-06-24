@@ -106,17 +106,19 @@ def schema_for_column(c):
         result.type = ['null', 'string']
         result.format = 'time'
 
-    elif data_type in BINARY_TYPE:
-        result.type = ['null', 'string']
-        result.format = 'binary'
 
     elif data_type in SEMI_STRUCTURED_TYPES:
         result.type = ['null', 'string']
         result.format = 'semi_structured'
 
-    elif data_type in GEOGRAPHY_TYPE:
-        result.type = ['null', 'string']
-        result.format = 'geography'
+    # Symon: unsupported in target - mark as unsupported so that normal sync and s3 unload sync are consistent
+    # elif data_type in BINARY_TYPE:
+    #     result.type = ['null', 'string']
+    #     result.format = 'binary'
+
+    # elif data_type in GEOGRAPHY_TYPE:
+    #     result.type = ['null', 'string']
+    #     result.format = 'geography'
 
     else:
         result = Schema(None,

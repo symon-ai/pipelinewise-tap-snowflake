@@ -124,8 +124,8 @@ def generate_select_sql(catalog_entry, columns):
             escaped_columns.append(f'ST_ASTEXT({escaped_col}) as {escaped_col}')
         # Castings below were added for WP-21311 to make sure that Snowflake import using s3 unload sync vs regular sync 
         # uses the same select query.
-        elif property_format == 'time':
-            escaped_columns.append(f"TO_VARCHAR({escaped_col}, 'HH24:MI:SS.FF6') as {escaped_col}")
+        # elif property_format == 'time':
+        #     escaped_columns.append(f"TO_VARCHAR({escaped_col}, 'HH24:MI:SS.FF6') as {escaped_col}")
         # Symon simply drops timezone info instead of casting to UTC. Snowflake's TO_TIMESTAMP_NTZ also has the same behavior.
         elif property_format == 'date-time':
             escaped_columns.append(f'TO_TIMESTAMP_NTZ({escaped_col}) as {escaped_col}')

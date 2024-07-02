@@ -546,7 +546,7 @@ def do_sync_incremental(snowflake_conn, catalog_entry, state, columns):
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
 
-def do_sync_full_table(snowflake_conn, catalog_entry, state, columns, config):
+def do_sync_full_table(snowflake_conn, catalog_entry, state, columns):
     LOGGER.info('Stream %s is using full table replication', catalog_entry.stream)
 
     write_schema_message(catalog_entry)
@@ -694,7 +694,7 @@ def sync_streams(snowflake_conn, catalog, state, config):
                 #     do_sync_full_table_parallel(snowflake_conn, catalog_entry, state, columns, config)
                 # # 4) normal import - single worker running tap-snowflake
                 else:
-                    do_sync_full_table(snowflake_conn, catalog_entry, state, columns, config)
+                    do_sync_full_table(snowflake_conn, catalog_entry, state, columns)
             else:
                 raise Exception(
                     'Only INCREMENTAL and FULL TABLE replication methods are supported')

@@ -159,25 +159,25 @@ def generate_copy_sql(select_sql, prefix, temp_s3_upload_folder=None, temp_s3_cr
 
 
 # TODO: Commenting out for now as they are not for coming release 3.49.0/3.50.0
-#  def upload_file_to_s3(s3_client, file_to_copy, s3_loc):
-#     upload_key = f'{s3_loc["key"]}/{os.path.basename(file_to_copy)}'
-#     LOGGER.info(f'Uploading file {file_to_copy} to s3://{s3_loc["bucket"]}/{upload_key}')
-#     s3_client.upload_file(file_to_copy, s3_loc['bucket'], upload_key)
+def upload_file_to_s3(s3_client, file_to_copy, s3_loc):
+    upload_key = f'{s3_loc["key"]}/{os.path.basename(file_to_copy)}'
+    LOGGER.info(f'Uploading file {file_to_copy} to s3://{s3_loc["bucket"]}/{upload_key}')
+    s3_client.upload_file(file_to_copy, s3_loc['bucket'], upload_key)
 
 
-# def make_directory(directory_name):
-#     path = f'{os.getcwd()}/{directory_name}'
-#     if not os.path.exists(path):
-#         os.mkdir(path)
-#     return path
+def make_directory(directory_name):
+    path = f'{os.getcwd()}/{directory_name}'
+    if not os.path.exists(path):
+        os.mkdir(path)
+    return path
 
 
-# def remove_file(file_path):
-#     os.remove(file_path)
+def remove_file(file_path):
+    os.remove(file_path)
 
 
-# def remove_directory(directory):
-#     shutil.rmtree(directory)
+def remove_directory(directory):
+    shutil.rmtree(directory)
 
 
 # pylint: disable=too-many-branches

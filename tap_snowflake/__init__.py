@@ -430,72 +430,72 @@ def write_schema_message(catalog_entry, bookmark_properties=None):
     ))
 
 # TODO: Commenting out for now as they are not for coming release 3.49.0/3.50.0
-# def do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_upload_folder):
-#     LOGGER.info('Stream %s is using internal unload', catalog_entry.stream)
-#     with snowflake_conn.connect_with_backoff() as open_conn:
-#         with open_conn.cursor() as cur:
-#             cur.execute('ALTER SESSION SET ENABLE_UNLOAD_PHYSICAL_TYPE_OPTIMIZATION = FALSE')
-#             # prefix (folder name) to use for exporting table to snowflake user stage + downloading to local
-#             prefix = uuid4()
+def do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_upload_folder):
+    LOGGER.info('Stream %s is using internal unload', catalog_entry.stream)
+    with snowflake_conn.connect_with_backoff() as open_conn:
+        with open_conn.cursor() as cur:
+            cur.execute('ALTER SESSION SET ENABLE_UNLOAD_PHYSICAL_TYPE_OPTIMIZATION = FALSE')
+            # prefix (folder name) to use for exporting table to snowflake user stage + downloading to local
+            prefix = uuid4()
             
-#             try:
-#                 # 1. export table to snowflake user stage under folder <prefix> as parquet files. 
-#                 select_sql = common.generate_select_sql(catalog_entry, columns)
-#                 LOGGER.info(f'Select query: {select_sql}')
-#                 copy_sql = common.generate_copy_sql(select_sql, prefix)
-#                 LOGGER.info(f'Running COPY query to export table {catalog_entry.stream} to {prefix} folder in snowflake user stage')
-#                 cur.execute(copy_sql)
-#                 copy_results = cur.fetchall()
+            try:
+                # 1. export table to snowflake user stage under folder <prefix> as parquet files. 
+                select_sql = common.generate_select_sql(catalog_entry, columns)
+                LOGGER.info(f'Select query: {select_sql}')
+                copy_sql = common.generate_copy_sql(select_sql, prefix)
+                LOGGER.info(f'Running COPY query to export table {catalog_entry.stream} to {prefix} folder in snowflake user stage')
+                cur.execute(copy_sql)
+                copy_results = cur.fetchall()
 
-#                 # table is empty, raise error
-#                 if len(copy_results) == 0:
-#                     raise SymonException('No data available.', 'snowflake.SnowflakeClientError')
+                # table is empty, raise error
+                if len(copy_results) == 0:
+                    raise SymonException('No data available.', 'snowflake.SnowflakeClientError')
 
-#                 # 2. list all files written to user stage under folder <prefix>
-#                 list_sql = f"LIST @~/{prefix}/"
-#                 LOGGER.info(f'Running LIST query to list files in {prefix} folder in user stage')
-#                 cur.execute(list_sql)
-#                 files_in_user_stage = cur.fetchall()
+                # 2. list all files written to user stage under folder <prefix>
+                list_sql = f"LIST @~/{prefix}/"
+                LOGGER.info(f'Running LIST query to list files in {prefix} folder in user stage')
+                cur.execute(list_sql)
+                files_in_user_stage = cur.fetchall()
                 
-#                 # 3. download files to local working directory (./<prefix>/) and move files to s3. use the same prefix for local working directory
-#                 s3_client = boto3.client('s3')                
-#                 local_working_dir = common.make_directory(prefix)
+                # 3. download files to local working directory (./<prefix>/) and move files to s3. use the same prefix for local working directory
+                s3_client = boto3.client('s3')                
+                local_working_dir = common.make_directory(prefix)
                 
-#                 LOGGER.info(f'Moving files to s3')
-#                 for file_info in files_in_user_stage:
-#                     # filename is the filename in snowflake user stage, which includes folder path in the filename. since we created 
-#                     # local working directory using the same prefix used in snowflake's user stage, we can reuse the filename to clean up 
-#                     # local working directory
-#                     filename = file_info[0]
-#                     get_sql = f"GET @~/{filename} file://{local_working_dir}/"
-#                     cur.execute(get_sql)
+                LOGGER.info(f'Moving files to s3')
+                for file_info in files_in_user_stage:
+                    # filename is the filename in snowflake user stage, which includes folder path in the filename. since we created 
+                    # local working directory using the same prefix used in snowflake's user stage, we can reuse the filename to clean up 
+                    # local working directory
+                    filename = file_info[0]
+                    get_sql = f"GET @~/{filename} file://{local_working_dir}/"
+                    cur.execute(get_sql)
 
-#                     common.upload_file_to_s3(s3_client, filename, temp_s3_upload_folder)
-#                     common.remove_file(filename)
+                    common.upload_file_to_s3(s3_client, filename, temp_s3_upload_folder)
+                    common.remove_file(filename)
                     
-#                     # remove processed file from snowflake's user stage
-#                     remove_file_sql = f"REMOVE @~/{filename}"
-#                     cur.execute(remove_file_sql)
+                    # remove processed file from snowflake's user stage
+                    remove_file_sql = f"REMOVE @~/{filename}"
+                    cur.execute(remove_file_sql)
                 
-#                 # log import result
-#                 total_bytes_processed = 0
-#                 total_rows_processed = 0
-#                 total_files_processed = len(copy_results)
-#                 for res in copy_results:
-#                     total_bytes_processed += res[1]
-#                     total_rows_processed += res[2]
+                # log import result
+                total_bytes_processed = 0
+                total_rows_processed = 0
+                total_files_processed = len(copy_results)
+                for res in copy_results:
+                    total_bytes_processed += res[1]
+                    total_rows_processed += res[2]
                 
-#                 LOGGER.info(f'{catalog_entry.stream} import using internal unload finished: {total_rows_processed} rows were imported as {total_files_processed} files with total of {total_bytes_processed} bytes.')
-#             finally:
-#                 try:
-#                     # clean up, remove files from snowflake user stage
-#                     remove_sql = f"REMOVE @~/{prefix}/"
-#                     LOGGER.info(f'Running REMOVE query to clean up {prefix} folder in user stage')
-#                     cur.execute(remove_sql)
-#                     LOGGER.info(f'Cleaning up local working directory {local_working_dir}')
-#                     common.remove_directory(local_working_dir)
-#                 except:
-#                     pass
+                LOGGER.info(f'{catalog_entry.stream} import using internal unload finished: {total_rows_processed} rows were imported as {total_files_processed} files with total of {total_bytes_processed} bytes.')
+            finally:
+                try:
+                    # clean up, remove files from snowflake user stage
+                    remove_sql = f"REMOVE @~/{prefix}/"
+                    LOGGER.info(f'Running REMOVE query to clean up {prefix} folder in user stage')
+                    cur.execute(remove_sql)
+                    LOGGER.info(f'Cleaning up local working directory {local_working_dir}')
+                    common.remove_directory(local_working_dir)
+                except:
+                    pass
 
 
 def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_creds, temp_s3_upload_folder):
@@ -686,9 +686,9 @@ def sync_streams(snowflake_conn, catalog, state, config):
                 if temp_s3_creds is not None and temp_s3_upload_folder is not None:
                     do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_creds, temp_s3_upload_folder)
                 # TODO: Commenting out for now as they are not for coming release 3.49.0/3.50.0
-                # # 2) unload table as parquet files to snowflake internal stage, move to s3
-                # elif temp_s3_upload_folder is not None:
-                #     do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_upload_folder)
+                # 2) unload table as parquet files to snowflake internal stage, move to s3
+                elif temp_s3_upload_folder is not None:
+                    do_sync_internal_unload(snowflake_conn, catalog_entry, columns, temp_s3_upload_folder)
                 # # 3) parallel import - multiple workers running tap-snowflake
                 # elif config.get('result_batch_location', None) is not None:
                 #     do_sync_full_table_parallel(snowflake_conn, catalog_entry, state, columns, config)

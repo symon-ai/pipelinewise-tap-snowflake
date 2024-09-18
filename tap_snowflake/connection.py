@@ -38,7 +38,8 @@ def validate_config(config):
         'account',
         'dbname',
         'warehouse',
-        'tables'
+        'tables',
+        'auth_method'
     ]
 
     # Check if mandatory keys exist
@@ -46,8 +47,14 @@ def validate_config(config):
         if not config.get(k, None):
             errors.append(f'Required key is missing from config: [{k}]')
     
-    if not (config.get('user', None) and config.get('password', None)) and not config.get('access_token', None):
-        errors.append('Either user/password or access_token must be provided in the config.')
+    if config.get('auth_method', None) == 'basic':
+        if not (config.get('user', None) and config.get('password', None)):
+            errors.append('user/password must be provided in the config for basic authentication.')
+    elif config.get('auth_method', None) == 'oauth':
+        if not (config.get('access_token', None)):
+            errors.append('access_token must be provided in the config for oauth authentication.')
+    else:
+        errors.append('auth_method must be either "basic" or "oauth".')
 
     return errors
 
@@ -83,14 +90,12 @@ class SnowflakeConnection:
                     # Use insecure mode to avoid "Failed to get OCSP response" warnings
                     # insecure_mode=True
                 }
-            if self.connection_config.get('user', None) and self.connection_config.get('password', None):
+            if self.connection_config.get('auth_method') == 'basic':
                 config['user'] = self.connection_config['user']
                 config['password'] = self.connection_config['password']
-            elif self.connection_config.get('access_token', None):
+            else: # oauth - connection_config['auth_method'] is validated already
                 config['authenticator'] = 'oauth'
                 config['token'] = self.connection_config['access_token']
-            else:
-                raise Exception('Either user/password or access_token must be provided in the config')
             
             return snowflake.connector.connect(**config)
         except snowflake.connector.errors.DatabaseError as e:

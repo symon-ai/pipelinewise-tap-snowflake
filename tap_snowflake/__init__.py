@@ -54,7 +54,8 @@ REQUIRED_CONFIG_KEYS = [
     'account',
     'dbname',
     'warehouse',
-    'tables'
+    'tables',
+    'auth_method'
 ]
 
 # Snowflake data types
@@ -711,8 +712,6 @@ def main_impl():
         # used for storing error info to write if error occurs
         error_info = None
         args = utils.parse_args(REQUIRED_CONFIG_KEYS)
-        if not (args.config.get('user', None) and args.config.get('password', None)) and not args.config.get('access_token', None):
-            raise Exception('Either user/password or access_token must be provided in the config.')
 
         snowflake_conn = SnowflakeConnection(args.config)
 

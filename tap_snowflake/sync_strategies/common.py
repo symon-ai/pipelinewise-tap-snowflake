@@ -142,16 +142,19 @@ def generate_select_sql(catalog_entry, columns):
     return select_sql
 
 
-def generate_copy_sql(select_sql, prefix, temp_s3_upload_folder=None, temp_s3_creds=None):
+def generate_copy_sql(select_sql, prefix, temp_s3_upload_folder=None, temp_s3_creds=None, storage_integration=None):
     file_format_line = f"FILE_FORMAT = (TYPE = 'PARQUET')"
     copy_option_line = f"HEADER = TRUE MAX_FILE_SIZE = {128 * 1024 * 1024} DETAILED_OUTPUT = TRUE"
 
     # export table to external stage s3
-    if temp_s3_upload_folder is not None and temp_s3_creds is not None:
+    if temp_s3_upload_folder is not None and (temp_s3_creds is not None or storage_integration is not None):
         # snowflake addes suffix _x_y_z to the prefix to generate filenames (to ensure distinct filenames across files generated from parallel threads)
         # e.g. for s3 location below, filename would be <prefix>_0_1_0.snappy.parquet
         s3_url = f"s3://{temp_s3_upload_folder['bucket']}/{temp_s3_upload_folder['key']}/{prefix}"
-        credentials_line = f"CREDENTIALS = (AWS_KEY_ID = '{temp_s3_creds['accessKeyID']}', AWS_SECRET_KEY = '{temp_s3_creds['secretKey']}', AWS_TOKEN = '{temp_s3_creds['sessionToken']}')"
+        if temp_s3_creds is not None:
+            credentials_line = f"CREDENTIALS = (AWS_KEY_ID = '{temp_s3_creds['accessKeyID']}', AWS_SECRET_KEY = '{temp_s3_creds['secretKey']}', AWS_TOKEN = '{temp_s3_creds['sessionToken']}')"
+        else:
+            credentials_line = f"STORAGE_INTEGRATION = {storage_integration}"
         return f"COPY INTO '{s3_url}' FROM ({select_sql}) {credentials_line} {file_format_line} {copy_option_line}"
     
     # export table to snowflake internal stage. exports files into <user stage>/<prefix> folder with auto-generated filename data_x_y_z.parquet

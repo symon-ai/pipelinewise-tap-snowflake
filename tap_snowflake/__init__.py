@@ -497,7 +497,7 @@ def write_schema_message(catalog_entry, bookmark_properties=None):
 #                     pass
 
 
-def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_creds, temp_s3_upload_folder):
+def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_upload_folder, temp_s3_creds, storage_integration):
     LOGGER.info('Stream %s is using external unload', catalog_entry.stream)
     with snowflake_conn.connect_with_backoff() as open_conn:
         with open_conn.cursor() as cur:
@@ -506,9 +506,10 @@ def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_cred
             LOGGER.info(f'Select query: {select_sql}')
             # random filename to use for parquet files exported to s3
             prefix = uuid4()
-            copy_sql = common.generate_copy_sql(select_sql, prefix, temp_s3_upload_folder, temp_s3_creds)
+            copy_sql = common.generate_copy_sql(select_sql, prefix, temp_s3_upload_folder, temp_s3_creds, storage_integration)
 
             LOGGER.info(f'Running COPY query to export table {catalog_entry.stream} to S3')
+            LOGGER.info(f'### COPY QUERY: {copy_sql}')
             cur.execute(copy_sql)
             copy_results = cur.fetchall()
 
@@ -681,9 +682,10 @@ def sync_streams(snowflake_conn, catalog, state, config):
                 # 4 syncing methods for Symon 
                 temp_s3_creds = config.get('temp_s3_creds', None)
                 temp_s3_upload_folder = config.get('temp_s3_upload_folder', None)
+                storage_integration = config.get('storage_integration', None)
                 # 1) unload table as parquet files to s3
-                if temp_s3_creds is not None and temp_s3_upload_folder is not None:
-                    do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_creds, temp_s3_upload_folder)
+                if (temp_s3_creds is not None or storage_integration is not None) and temp_s3_upload_folder is not None:
+                    do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_upload_folder, temp_s3_creds, storage_integration)
                 # TODO: Commenting out for now as they are not for coming release 3.49.0/3.50.0
                 # # 2) unload table as parquet files to snowflake internal stage, move to s3
                 # elif temp_s3_upload_folder is not None:

@@ -37,16 +37,24 @@ def validate_config(config):
     required_config_keys = [
         'account',
         'dbname',
-        'user',
-        'password',
         'warehouse',
-        'tables'
+        'tables',
+        'auth_method'
     ]
 
     # Check if mandatory keys exist
     for k in required_config_keys:
         if not config.get(k, None):
             errors.append(f'Required key is missing from config: [{k}]')
+    
+    if config.get('auth_method', None) == 'basic':
+        if not (config.get('user', None) and config.get('password', None)):
+            errors.append('user/password must be provided in the config for basic authentication.')
+    elif config.get('auth_method', None) == 'oauth':
+        if not (config.get('access_token', None)):
+            errors.append('access_token must be provided in the config for oauth authentication.')
+    else:
+        errors.append('auth_method must be either "basic" or "oauth".')
 
     return errors
 
@@ -70,20 +78,26 @@ class SnowflakeConnection:
     def open_connection(self):
         """Connect to snowflake database"""
         try:
-            return snowflake.connector.connect(
-                user=self.connection_config['user'],
-                password=self.connection_config['password'],
-                account=self.connection_config['account'],
-                role=self.connection_config.get('role'),  # optional parameter
-                database=self.connection_config['dbname'],
-                warehouse=self.connection_config['warehouse'],
-                client_prefetch_threads=self.connection_config.get(
-                    'client_prefetch_threads', 4),
-                insecure_mode=self.connection_config.get('insecure_mode', False),
-                network_timeout=1800
-                # Use insecure mode to avoid "Failed to get OCSP response" warnings
-                # insecure_mode=True
-            )
+            config = {
+                    'account': self.connection_config['account'],
+                    'role': self.connection_config.get('role'),  # optional parameter
+                    'database': self.connection_config['dbname'],
+                    'warehouse': self.connection_config['warehouse'],
+                    'client_prefetch_threads': self.connection_config.get(
+                        'client_prefetch_threads', 4),
+                    'insecure_mode': self.connection_config.get('insecure_mode', False),
+                    'network_timeout': 1800
+                    # Use insecure mode to avoid "Failed to get OCSP response" warnings
+                    # insecure_mode=True
+                }
+            if self.connection_config.get('auth_method') == 'basic':
+                config['user'] = self.connection_config['user']
+                config['password'] = self.connection_config['password']
+            else: # oauth - connection_config['auth_method'] is validated already
+                config['authenticator'] = 'oauth'
+                config['token'] = self.connection_config['access_token']
+            
+            return snowflake.connector.connect(**config)
         except snowflake.connector.errors.DatabaseError as e:
             if 'Incorrect username or password was specified' in str(e):
                 raise SymonException('The username or password provided is incorrect. Please check and try again.', 'snowflake.SnowflakeClientError')

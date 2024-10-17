@@ -544,8 +544,8 @@ def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_uplo
                 raise
             finally:
                 try:
-                    if storage_integration is not None:
                     # clean up temporary stage. If this errors out, it's still okay since temporary stages lives only for a short duration.
+                    if storage_integration is not None:
                         cur.execute(f"DROP STAGE IF EXISTS {stage_name}")
                 except Exception as e:
                     LOGGER.error(f"Error occurred removing temporary stage: {e}")

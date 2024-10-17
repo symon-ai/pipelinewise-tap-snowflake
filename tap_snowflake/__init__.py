@@ -441,7 +441,7 @@ def write_schema_message(catalog_entry, bookmark_properties=None):
 #                 # 1. export table to snowflake user stage under folder <prefix> as parquet files. 
 #                 select_sql = common.generate_select_sql(catalog_entry, columns)
 #                 LOGGER.info(f'Select query: {select_sql}')
-#                 copy_sql = common.generate_copy_sql(select_sql, prefix)
+#                 copy_sql = common.generate_copy_sql_internal_unload(select_sql, prefix)
 #                 LOGGER.info(f'Running COPY query to export table {catalog_entry.stream} to {prefix} folder in snowflake user stage')
 #                 cur.execute(copy_sql)
 #                 copy_results = cur.fetchall()
@@ -505,27 +505,51 @@ def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_uplo
             select_sql = common.generate_select_sql(catalog_entry, columns)
             LOGGER.info(f'Select query: {select_sql}')
             # random filename to use for parquet files exported to s3
-            prefix = uuid4()
-            copy_sql = common.generate_copy_sql(select_sql, prefix, temp_s3_upload_folder, temp_s3_creds, storage_integration)
+            try:
+                if storage_integration is not None:
+                    stage_name = f"import_{uuid4()}".replace('-', '_')
+                    schema = common.get_schema_name(catalog_entry)
+                    cur.execute(f"USE SCHEMA {schema}")
+                    # create temp stage that is tied to the storage integration in snowflake
+                    temp_stage_query = common.generate_create_temp_stage_sql(stage_name, temp_s3_upload_folder, storage_integration)
+                    LOGGER.info(f'Running CREATE STAGE query to create temporary stage {stage_name}')
+                    cur.execute(temp_stage_query)
 
-            LOGGER.info(f'Running COPY query to export table {catalog_entry.stream} to S3')
-            LOGGER.info(f'### COPY QUERY: {copy_sql}')
-            cur.execute(copy_sql)
-            copy_results = cur.fetchall()
+                    # copy query using the temporary stage
+                    copy_sql = common.generate_copy_sql_external_unload(select_sql, temp_s3_upload_folder, stage_name)
+                else:
+                    copy_sql = common.generate_copy_sql_external_unload(select_sql, temp_s3_upload_folder, None, temp_s3_creds)
 
-            # table is empty, raise error
-            if len(copy_results) == 0:
-                raise SymonException('No data available.', 'snowflake.SnowflakeClientError')
+                LOGGER.info(f'Running COPY query to export table {catalog_entry.stream} to S3')
+                cur.execute(copy_sql)
+                copy_results = cur.fetchall()
 
-            # log import result
-            total_bytes_processed = 0
-            total_rows_processed = 0
-            total_files_processed = len(copy_results)
-            for res in copy_results:
-                total_bytes_processed += res[1]
-                total_rows_processed += res[2]
-            
-            LOGGER.info(f'{catalog_entry.stream} import using external unload finished: {total_rows_processed} rows were imported as {total_files_processed} files with total of {total_bytes_processed} bytes.')
+                # table is empty, raise error
+                if len(copy_results) == 0:
+                    raise SymonException('No data available.', 'snowflake.SnowflakeClientError')
+
+                # log import result
+                total_bytes_processed = 0
+                total_rows_processed = 0
+                total_files_processed = len(copy_results)
+                for res in copy_results:
+                    total_bytes_processed += res[1]
+                    total_rows_processed += res[2]
+                
+                LOGGER.info(f'{catalog_entry.stream} import using external unload finished: {total_rows_processed} rows were imported as {total_files_processed} files with total of {total_bytes_processed} bytes.')
+            except snowflake.connector.errors.ProgrammingError as e:
+                err_msg = str(e)
+                if 'Insufficient privileges to operate on integration' in err_msg:
+                    raise SymonException(f'USAGE privilege on integration "{storage_integration.upper()}" is missing.', "snowflake.SnowflakeClientError")
+                raise
+            finally:
+                try:
+                    if storage_integration is not None:
+                    # clean up temporary stage. If this errors out, it's still okay since temporary stages lives only for a short duration.
+                        cur.execute(f"DROP STAGE IF EXISTS {stage_name}")
+                except Exception as e:
+                    LOGGER.error(f"Error occurred removing temporary stage: {e}")
+                    pass
 
 
 def do_sync_incremental(snowflake_conn, catalog_entry, state, columns):

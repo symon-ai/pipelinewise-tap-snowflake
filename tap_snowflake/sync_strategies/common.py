@@ -142,20 +142,43 @@ def generate_select_sql(catalog_entry, columns):
     return select_sql
 
 
-def generate_copy_sql(select_sql, prefix, temp_s3_upload_folder=None, temp_s3_creds=None):
+def generate_create_temp_stage_sql(stage_name, temp_s3_upload_folder, storage_integration):
+    s3_url = get_s3_url(temp_s3_upload_folder)
+    return f"CREATE OR REPLACE TEMPORARY STAGE {stage_name} URL = '{s3_url}' STORAGE_INTEGRATION = {storage_integration}"
+
+
+# copy query for unloading to external stage
+def generate_copy_sql_external_unload(select_sql, temp_s3_upload_folder, stage_name=None, temp_s3_creds=None):
+    common_line = get_common_line_for_unload()
+
+    if temp_s3_creds is not None:
+        # snowflake uses filename data_{x}_{y}_{z}.parquet to ensure distinct filenames across files generated from parallel threads
+        s3_url = get_s3_url(temp_s3_upload_folder)
+        credentials_line = f"CREDENTIALS = (AWS_KEY_ID = '{temp_s3_creds['accessKeyID']}', AWS_SECRET_KEY = '{temp_s3_creds['secretKey']}', AWS_TOKEN = '{temp_s3_creds['sessionToken']}')"
+        return f"COPY INTO '{s3_url}' FROM ({select_sql}) {credentials_line} {common_line}"
+    if stage_name is not None:
+        return f"COPY INTO @{stage_name} FROM ({select_sql}) {common_line}"
+    raise Exception("Missing credentials or storage integration for external stage")
+
+
+# # copy query for unloading to internal stage
+# # TODO: 
+# # - double check security rules on using internal stage - e.g. PREVENT_UNLOAD_TO_INTERNAL_STAGES
+# # - look into using temporary internal stage instead of internal named stage
+# def generate_copy_sql_internal_unload(select_sql, prefix):
+#     common_line = get_common_line_for_unload()
+#     # export table to snowflake internal stage. exports files into <user stage>/<stage_name> folder with auto-generated filename data_{x}_{y}_{z}.parquet
+#     return f"COPY INTO @~/{prefix}/ FROM ({select_sql}) {common_line}"
+
+
+def get_common_line_for_unload():
     file_format_line = f"FILE_FORMAT = (TYPE = 'PARQUET')"
     copy_option_line = f"HEADER = TRUE MAX_FILE_SIZE = {128 * 1024 * 1024} DETAILED_OUTPUT = TRUE"
+    return f"{file_format_line} {copy_option_line}"
 
-    # export table to external stage s3
-    if temp_s3_upload_folder is not None and temp_s3_creds is not None:
-        # snowflake addes suffix _x_y_z to the prefix to generate filenames (to ensure distinct filenames across files generated from parallel threads)
-        # e.g. for s3 location below, filename would be <prefix>_0_1_0.snappy.parquet
-        s3_url = f"s3://{temp_s3_upload_folder['bucket']}/{temp_s3_upload_folder['key']}/{prefix}"
-        credentials_line = f"CREDENTIALS = (AWS_KEY_ID = '{temp_s3_creds['accessKeyID']}', AWS_SECRET_KEY = '{temp_s3_creds['secretKey']}', AWS_TOKEN = '{temp_s3_creds['sessionToken']}')"
-        return f"COPY INTO '{s3_url}' FROM ({select_sql}) {credentials_line} {file_format_line} {copy_option_line}"
-    
-    # export table to snowflake internal stage. exports files into <user stage>/<prefix> folder with auto-generated filename data_x_y_z.parquet
-    return f"COPY INTO @~/{prefix}/ FROM ({select_sql}) {file_format_line} {copy_option_line}"
+
+def get_s3_url(temp_s3_upload_folder):
+    return f"s3://{temp_s3_upload_folder['bucket']}/{temp_s3_upload_folder['key']}/"
 
 
 # TODO: Commenting out for now as they are not for coming release 3.49.0/3.50.0

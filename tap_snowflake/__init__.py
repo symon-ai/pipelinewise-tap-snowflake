@@ -520,8 +520,27 @@ def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_uplo
                 else:
                     copy_sql = common.generate_copy_sql_external_unload(select_sql, temp_s3_upload_folder, None, temp_s3_creds)
 
-                LOGGER.info(f'Running COPY query to export table {catalog_entry.stream} to S3')
-                cur.execute(copy_sql)
+                # storage integration uses IAM role which is updated when Symon import starts. There could be propagation delay
+                # that could take several seconds to minutes, so we retry if we get 's3:ListBucket' error which is the first 
+                # permission Snowflake checks with storage integration
+                wait_time = 30
+                max_try = 1 if storage_integration is None else 3
+                i = 0
+                while i < max_try:
+                    try:
+                        i += 1
+                        LOGGER.info(f'Running COPY query to export table {catalog_entry.stream} to S3 for {i}th try')
+                        cur.execute(copy_sql)
+                        break
+                    except snowflake.connector.errors.ProgrammingError as e:
+                        err_msg = str(e)
+                        if 'not authorized to perform: s3:ListBucket' in err_msg and i < max_try:
+                            wait = wait_time * i
+                            LOGGER.info(f'Attempt {i} failed with error: {err_msg}. Retrying after {wait} seconds')
+                            time.sleep(wait)
+                        else:
+                            raise
+
                 copy_results = cur.fetchall()
 
                 # table is empty, raise error

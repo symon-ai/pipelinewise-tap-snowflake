@@ -152,6 +152,12 @@ def get_table_columns(snowflake_conn, tables):
     """
     table_columns = []
     for table in tables:
+        schema = table.split('.')[0]
+        table_name = table.split('.')[1]
+        escaped_schema = common.escape(schema)
+        escaped_table = common.escape(table_name)
+        table = f'{escaped_schema}.{escaped_table}'
+
         queries = []
 
         LOGGER.info('Getting column information for %s...', table)
@@ -184,6 +190,10 @@ def get_table_columns(snowflake_conn, tables):
                   ,PARSE_JSON(show_columns."data_type"):scale::number       AS numeric_scale
               FROM show_columns
         """
+        print('----show_columns---')
+        print(show_columns)
+        print('----select---')
+        print(select)
         queries.extend([show_columns, select])
 
         # Run everything in one transaction

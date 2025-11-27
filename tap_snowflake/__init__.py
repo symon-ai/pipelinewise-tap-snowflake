@@ -152,18 +152,17 @@ def get_table_columns(snowflake_conn, tables):
     """
     table_columns = []
     for table in tables:
-        schema = table.split('.')[0]
-        table_name = table.split('.')[1]
-        escaped_schema = common.escape(schema)
-        escaped_table = common.escape(table_name)
-        table = f'{escaped_schema}.{escaped_table}'
+        parts = table.split('.')
+        schema_name = parts[0]
+        table_name = parts[1]
+        escaped_table = f'{common.escape(schema_name)}.{common.escape(table_name)}'
 
         queries = []
 
-        LOGGER.info('Getting column information for %s...', table)
+        LOGGER.info('Getting column information for %s...', escaped_table)
 
         # Get column data types by SHOW commands
-        show_columns = f'SHOW COLUMNS IN TABLE {table}'
+        show_columns = f'SHOW COLUMNS IN TABLE {escaped_table}'
 
         # Convert output of SHOW commands to tables and use SQL joins to get every required information
         select = """

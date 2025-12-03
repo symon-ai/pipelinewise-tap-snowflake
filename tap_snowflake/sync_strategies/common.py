@@ -144,7 +144,9 @@ def generate_select_sql(catalog_entry, columns):
 
 def generate_create_temp_stage_sql(stage_name, temp_s3_upload_folder, storage_integration):
     s3_url = get_s3_url(temp_s3_upload_folder)
-    return f"CREATE OR REPLACE TEMPORARY STAGE {stage_name} URL = '{s3_url}' STORAGE_INTEGRATION = {storage_integration}"
+    # Escape to preserve case sensitivity (quoted identifiers in Snowflake are case-sensitive)
+    escaped_storage_integration = escape(storage_integration)
+    return f"CREATE OR REPLACE TEMPORARY STAGE {stage_name} URL = '{s3_url}' STORAGE_INTEGRATION = {escaped_storage_integration}"
 
 
 # copy query for unloading to external stage

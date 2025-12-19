@@ -16,6 +16,7 @@ import pickle
 import boto3
 from uuid import uuid4
 from tap_snowflake.symon_exception import SymonException
+import snowflake.connector
 
 LOGGER = singer.get_logger('tap_snowflake')
 
@@ -386,7 +387,11 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
             # if rows_saved % 1000 == 0:
             #     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
-            row = cursor.fetchone()
+            # for long running imports, presigned URL of snowflake result batch could expire.
+            try:
+                row = cursor.fetchone()
+            except snowflake.connector.errors.ForbiddenError as e:
+                raise SymonException('Forbidden error occurred while fetching Snowflake table. This could occur if the table is too large.', 'snowflake.SnowflakeClientError') from e
 
     # do_sync_external_unload, do_sync_internal_unload makes snowflake export table as parquet file.
     # if table is empty, snowflake exports no file and we raise an error. raise same error for normal 

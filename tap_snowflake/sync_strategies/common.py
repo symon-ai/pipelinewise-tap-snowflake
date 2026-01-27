@@ -156,7 +156,7 @@ def generate_copy_sql_external_unload(select_sql, temp_s3_upload_folder, stage_n
         # snowflake uses filename data_{x}_{y}_{z}.parquet to ensure distinct filenames across files generated from parallel threads
         s3_url = get_s3_url(temp_s3_upload_folder)
         credentials_line = f"CREDENTIALS = (AWS_KEY_ID = '{temp_s3_creds['accessKeyID']}', AWS_SECRET_KEY = '{temp_s3_creds['secretKey']}', AWS_TOKEN = '{temp_s3_creds['sessionToken']}')"
-        return f"COPY INTO '{s3_url}' FROM ({select_sql}) {credentials_line} {common_line}"
+        return f"COPY INTO '{s3_url}' FROM ({select_sql}) {credentials_line} {common_line} OVERWRITE=TRUE"
     if stage_name is not None:
         return f"COPY INTO @{stage_name} FROM ({select_sql}) {common_line}"
     raise Exception("Missing credentials or storage integration for external stage")
@@ -174,7 +174,7 @@ def generate_copy_sql_external_unload(select_sql, temp_s3_upload_folder, stage_n
 
 def get_common_line_for_unload():
     file_format_line = f"FILE_FORMAT = (TYPE = 'PARQUET')"
-    copy_option_line = f"HEADER = TRUE MAX_FILE_SIZE = {128 * 1024 * 1024} DETAILED_OUTPUT = TRUE"
+    copy_option_line = f"HEADER = TRUE MAX_FILE_SIZE = {512} DETAILED_OUTPUT = TRUE"
     return f"{file_format_line} {copy_option_line}"
 
 

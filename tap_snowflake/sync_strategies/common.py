@@ -391,7 +391,7 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
             try:
                 row = cursor.fetchone()
             except snowflake.connector.errors.ForbiddenError as e:
-                raise SymonException('Forbidden error occurred while fetching Snowflake table. This could occur if the table is too large.', 'snowflake.SnowflakeClientError') from e
+                raise SymonException("Snowflake encountered an error while transferring data. Check that your Snowflake table isn't too large.", 'snowflake.SnowflakeClientError') from e
 
     # do_sync_external_unload, do_sync_internal_unload makes snowflake export table as parquet file.
     # if table is empty, snowflake exports no file and we raise an error. raise same error for normal 

@@ -86,7 +86,7 @@ class SnowflakeConnection:
                     'client_prefetch_threads': self.connection_config.get(
                         'client_prefetch_threads', 4),
                     'insecure_mode': self.connection_config.get('insecure_mode', False),
-                    'network_timeout': 45 # increase the network timeout WP-29854
+                    'network_timeout': 7200 # increase the network timeout WP-29854
                     # Use insecure mode to avoid "Failed to get OCSP response" warnings
                     # insecure_mode=True
                 }

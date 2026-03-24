@@ -5,6 +5,7 @@ import backoff
 import singer
 import sys
 import snowflake.connector
+from cryptography.hazmat.primitives import serialization
 from tap_snowflake.symon_exception import SymonException
 
 LOGGER = singer.get_logger('tap_snowflake')
@@ -47,14 +48,20 @@ def validate_config(config):
         if not config.get(k, None):
             errors.append(f'Required key is missing from config: [{k}]')
     
-    if config.get('auth_method', None) == 'basic':
+    auth_method = config.get('auth_method', None)
+    if auth_method == 'basic':
         if not (config.get('user', None) and config.get('password', None)):
             errors.append('user/password must be provided in the config for basic authentication.')
-    elif config.get('auth_method', None) == 'oauth':
+    elif auth_method == 'oauth':
         if not (config.get('access_token', None)):
             errors.append('access_token must be provided in the config for oauth authentication.')
+    elif auth_method == 'keypair':
+        if not config.get('user', None):
+            errors.append('user must be provided in the config for keypair authentication.')
+        if not config.get('private_key', None):
+            errors.append('private_key must be provided in the config for keypair authentication.')
     else:
-        errors.append('auth_method must be either "basic" or "oauth".')
+        errors.append('auth_method must be "basic", "oauth", or "keypair".')
 
     return errors
 
@@ -90,10 +97,20 @@ class SnowflakeConnection:
                     # Use insecure mode to avoid "Failed to get OCSP response" warnings
                     # insecure_mode=True
                 }
-            if self.connection_config.get('auth_method') == 'basic':
+            auth_method = self.connection_config.get('auth_method')
+            if auth_method == 'basic':
                 config['user'] = self.connection_config['user']
                 config['password'] = self.connection_config['password']
-            else: # oauth - connection_config['auth_method'] is validated already
+            elif auth_method == 'keypair':
+                config['user'] = self.connection_config['user']
+                pem_key = self.connection_config['private_key'].encode('utf-8')
+                private_key = serialization.load_pem_private_key(pem_key, password=None)
+                config['private_key'] = private_key.private_bytes(
+                    encoding=serialization.Encoding.DER,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption()
+                )
+            else:
                 config['authenticator'] = 'oauth'
                 config['token'] = self.connection_config['access_token']
             

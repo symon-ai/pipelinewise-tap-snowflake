@@ -30,7 +30,7 @@ from tap_snowflake.symon_exception import SymonException
 
 import boto3
 
-LOGGER = singer.get_logger('tap_snowflake')
+LOGGER = singer.get_logger()
 
 # Max number of rows that a SHOW SCHEMAS|TABLES|COLUMNS can return.
 # If more than this number of rows returned then tap-snowflake will raise TooManyRecordsException

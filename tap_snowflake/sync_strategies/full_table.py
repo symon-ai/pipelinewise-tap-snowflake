@@ -4,7 +4,7 @@
 import singer
 import tap_snowflake.sync_strategies.common as common
 
-LOGGER = singer.get_logger('tap_snowflake')
+LOGGER = singer.get_logger()
 
 BOOKMARK_KEYS = {'last_pk_fetched', 'max_pk_values', 'version', 'initial_full_table_complete'}
 

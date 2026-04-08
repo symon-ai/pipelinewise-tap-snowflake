@@ -17,15 +17,18 @@ dist/
 properties.json
 config.json
 state.json
+catalog.json
 
 *.db
 .DS_Store
 venv
 env
+.venv
 blog_old.md
 node_modules
 *.pyc
 tmp
+.python-version
 
 # Docs
 docs/_build/

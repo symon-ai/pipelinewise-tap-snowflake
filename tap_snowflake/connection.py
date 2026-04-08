@@ -8,7 +8,7 @@ import snowflake.connector
 from cryptography.hazmat.primitives import serialization
 from tap_snowflake.symon_exception import SymonException
 
-LOGGER = singer.get_logger('tap_snowflake')
+LOGGER = singer.get_logger()
 
 
 class TooManyRecordsException(Exception):

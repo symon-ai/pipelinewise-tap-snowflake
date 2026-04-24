@@ -5,6 +5,7 @@ import backoff
 import requests
 import singer
 import sys
+import time
 import snowflake.connector
 from cryptography.hazmat.primitives import serialization
 from tap_snowflake.symon_exception import SymonException
@@ -75,6 +76,7 @@ class SnowflakeConnection:
         connection_config:      Snowflake connection details
         """
         self.connection_config = connection_config
+        self._token_expires_at = 0
         config_errors = validate_config(connection_config)
         if len(config_errors) == 0:
             self.connection_config = connection_config
@@ -115,13 +117,17 @@ class SnowflakeConnection:
 
         LOGGER.info('Successfully refreshed Snowflake OAuth access token')
 
+    def _is_token_expired(self):
+        """Check if the OAuth access token is expired or about to expire."""
+        return time.time() >= self._token_expires_at - 60
+
     def open_connection(self):
         """Connect to snowflake database"""
-        if self._can_refresh_oauth_token():
+        if self._can_refresh_oauth_token() and self._is_token_expired():
             try:
                 self._refresh_access_token()
             except Exception as e:
-                LOGGER.warning('Failed to proactively refresh OAuth token, '
+                LOGGER.warning('Failed to refresh OAuth token, '
                                'will attempt connection with existing token: %s', e)
 
         try:

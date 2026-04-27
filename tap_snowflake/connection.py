@@ -124,6 +124,7 @@ class SnowflakeConnection:
     def open_connection(self):
         """Connect to snowflake database"""
         if self._can_refresh_oauth_token() and self._is_token_expired():
+            LOGGER.info('OAuth access token expired or about to expire, refreshing token')
             try:
                 self._refresh_access_token()
             except Exception as e:

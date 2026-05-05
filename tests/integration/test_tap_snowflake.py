@@ -14,7 +14,7 @@ try:
 except ImportError:
     import utils as test_utils
 
-LOGGER = singer.get_logger('tap_snowflake_tests')
+LOGGER = singer.get_logger()
 
 SCHEMA_NAME = 'tap_snowflake_test'
 

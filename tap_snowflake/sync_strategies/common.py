@@ -18,7 +18,7 @@ from uuid import uuid4
 from tap_snowflake.symon_exception import SymonException
 import snowflake.connector
 
-LOGGER = singer.get_logger('tap_snowflake')
+LOGGER = singer.get_logger()
 
 # TODO: Commenting out for now as they are not for coming release 3.49.0/3.50.0
 # RESULT_BATCH_FILENAME = 'snowflake_result_batches'

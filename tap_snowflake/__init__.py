@@ -539,7 +539,8 @@ def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_uplo
                         break
                     except snowflake.connector.errors.ProgrammingError as e:
                         err_msg = str(e)
-                        if 'not authorized to perform: s3:ListBucket' in err_msg and i < max_try:
+                        if ('not authorized to perform: s3:ListBucket' in err_msg or
+                                'Failed to access remote file: access denied' in err_msg) and i < max_try:
                             wait = wait_time * i
                             LOGGER.info(f'Attempt {i} failed with error: {err_msg}. Retrying after {wait} seconds')
                             time.sleep(wait)

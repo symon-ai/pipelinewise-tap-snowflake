@@ -174,7 +174,8 @@ def generate_copy_sql_external_unload(select_sql, temp_s3_upload_folder, stage_n
 
 def get_common_line_for_unload():
     file_format_line = f"FILE_FORMAT = (TYPE = 'PARQUET')"
-    copy_option_line = f"HEADER = TRUE MAX_FILE_SIZE = {128 * 1024 * 1024} DETAILED_OUTPUT = TRUE"
+    # OVERWRITE allows container reruns to reuse the same S3 upload folder without failing on leftover unload files.
+    copy_option_line = f"HEADER = TRUE MAX_FILE_SIZE = {128 * 1024 * 1024} DETAILED_OUTPUT = TRUE OVERWRITE = TRUE"
     return f"{file_format_line} {copy_option_line}"
 
 

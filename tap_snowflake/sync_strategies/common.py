@@ -183,6 +183,20 @@ def get_s3_url(temp_s3_upload_folder):
     return f"s3://{temp_s3_upload_folder['bucket']}/{temp_s3_upload_folder['key']}/"
 
 
+def clean_s3_prefix(temp_s3_upload_folder):
+    bucket = temp_s3_upload_folder['bucket']
+    prefix = temp_s3_upload_folder['key'] + '/'
+    s3 = boto3.client('s3')
+    paginator = s3.get_paginator('list_objects_v2')
+    deleted = 0
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        objects = [{'Key': obj['Key']} for obj in page.get('Contents', [])]
+        if objects:
+            s3.delete_objects(Bucket=bucket, Delete={'Objects': objects})
+            deleted += len(objects)
+    LOGGER.info(f'Cleaned {deleted} stale file(s) from s3://{bucket}/{prefix} before COPY INTO')
+
+
 # TODO: Commenting out for now as they are not for coming release 3.49.0/3.50.0
 #  def upload_file_to_s3(s3_client, file_to_copy, s3_loc):
 #     upload_key = f'{s3_loc["key"]}/{os.path.basename(file_to_copy)}'

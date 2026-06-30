@@ -525,8 +525,11 @@ def do_sync_external_unload(snowflake_conn, catalog_entry, columns, temp_s3_uplo
                 else:
                     copy_sql = common.generate_copy_sql_external_unload(select_sql, temp_s3_upload_folder, None, temp_s3_creds)
 
+                # Clean up any files left by a previous attempt so that OVERWRITE=TRUE cannot produce a mix of files from two different COPY INTO executions
+                common.clean_s3_prefix(temp_s3_upload_folder)
+
                 # storage integration uses IAM role which is updated when Symon import starts. There could be propagation delay
-                # that could take several seconds to minutes, so we retry if we get 's3:ListBucket' error which is the first 
+                # that could take several seconds to minutes, so we retry if we get 's3:ListBucket' error which is the first
                 # permission Snowflake checks with storage integration
                 wait_time = 30
                 max_try = 1 if storage_integration is None else 3

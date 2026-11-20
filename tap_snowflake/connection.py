@@ -17,6 +17,13 @@ class TooManyRecordsException(Exception):
     """Exception to raise when query returns more records than max_records"""
 
 
+def is_invalid_account_error(error: Exception) -> bool:
+    """Check if a connection error is caused by an invalid Snowflake account name"""
+    message = str(error)
+    return ('Verify the account name is correct' in message
+            or ('Failed to login' in message and '404 Not Found' in message))
+
+
 def retry_pattern():
     """Retry pattern decorator used when connecting to snowflake
     """
@@ -165,9 +172,7 @@ class SnowflakeConnection:
         except snowflake.connector.errors.DatabaseError as e:
             if 'Incorrect username or password was specified' in str(e):
                 raise SymonException('The username or password provided is incorrect. Please check and try again.', 'snowflake.SnowflakeClientError')
-            raise
-        except snowflake.connector.errors.ForbiddenError as e:
-            if 'Failed to connect to DB. Verify the account name is correct' in str(e):
+            if is_invalid_account_error(e):
                 raise SymonException("Sorry, we couldn't connect to the database. Please check the Snowflake URL and try again.", "snowflake.SnowflakeClientError")
             raise
 

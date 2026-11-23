@@ -234,7 +234,7 @@ class SnowflakeConnection:
                     qid = cur.sfqid
 
                     # rowcount is -1 when the row count is unknown
-                    rowcount = cur.rowcount
+                    rowcount = cur.rowcount if cur.rowcount is not None else -1
                     rowcount_unknown = rowcount < 0
 
                     # Raise exception if returned rows greater than max allowed records
@@ -242,10 +242,12 @@ class SnowflakeConnection:
                         raise TooManyRecordsException(
                             f'Query returned too many records. This query can return max {max_records} records')
 
-                    if rowcount_unknown or rowcount > 0:
-                        result = cur.fetchall()
-                        if rowcount_unknown and 0 < max_records < len(result):
+                    if rowcount_unknown and max_records > 0:
+                        result = cur.fetchmany(max_records + 1)
+                        if len(result) > max_records:
                             raise TooManyRecordsException(
                                 f'Query returned too many records. This query can return max {max_records} records')
+                    elif rowcount_unknown or rowcount > 0:
+                        result = cur.fetchall()
 
         return result

@@ -24,6 +24,13 @@ LOGGER = singer.get_logger()
 # RESULT_BATCH_FILENAME = 'snowflake_result_batches'
 # RESULT_BATCH_METADATA_FILENAME = 'snowflake_result_batches_metadata.json'
 
+def is_result_url_forbidden_error(error):
+    """Check if a result fetch failed with HTTP 403, e.g. an expired presigned result batch URL"""
+    http_status = getattr(error, 'http_status', None)
+    if http_status is not None:
+        return http_status == 403
+    return '403 Forbidden' in str(error)
+
 def escape(string):
     """Escape strings to be SQL safe"""
     if '"' in string:
@@ -405,8 +412,8 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
             # for long running imports, presigned URL of snowflake result batch could expire.
             try:
                 row = cursor.fetchone()
-            except snowflake.connector.errors.DatabaseError as e:
-                if '403' not in str(e) and 'Forbidden' not in str(e):
+            except snowflake.connector.errors.OperationalError as e:
+                if not is_result_url_forbidden_error(e):
                     raise
                 raise SymonException("Snowflake encountered an error while transferring data. Check that your Snowflake table isn't too large.", 'snowflake.SnowflakeClientError') from e
 

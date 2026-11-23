@@ -9,7 +9,7 @@ packages=[{ include = "tap_snowflake" }]
 [tool.poetry.dependencies]
 python = "^3.13.0"
 singer-python = "6.3.0"
-snowflake-connector-python = ">=5.2.0,<6"
+snowflake-connector-python = "^5.2.0"
 pandas = "2.3.3"
 pendulum = "3.2.0"
 cryptography = "^46.0.7"

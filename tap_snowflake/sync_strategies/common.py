@@ -29,7 +29,7 @@ def is_result_url_forbidden_error(error):
     http_status = getattr(error, 'http_status', None)
     if http_status is not None:
         return http_status == 403
-    return '403 Forbidden' in str(error)
+    return 'forbidden' in str(error).lower()
 
 def escape(string):
     """Escape strings to be SQL safe"""

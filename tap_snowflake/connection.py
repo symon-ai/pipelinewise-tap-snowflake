@@ -242,6 +242,7 @@ class SnowflakeConnection:
                         raise TooManyRecordsException(
                             f'Query returned too many records. This query can return max {max_records} records')
 
+                    if rowcount_unknown or rowcount > 0:
                         result = cur.fetchall()
                         if rowcount_unknown and 0 < max_records < len(result):
                             raise TooManyRecordsException(

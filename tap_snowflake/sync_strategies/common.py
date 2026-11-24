@@ -405,7 +405,9 @@ def sync_query(cursor, catalog_entry, state, select_sql, columns, stream_version
             # for long running imports, presigned URL of snowflake result batch could expire.
             try:
                 row = cursor.fetchone()
-            except snowflake.connector.errors.ForbiddenError as e:
+            except snowflake.connector.errors.OperationalError as e:
+                if not 'forbidden' in str(e).lower():
+                    raise
                 raise SymonException("Snowflake encountered an error while transferring data. Check that your Snowflake table isn't too large.", 'snowflake.SnowflakeClientError') from e
 
     # do_sync_external_unload, do_sync_internal_unload makes snowflake export table as parquet file.

@@ -165,9 +165,7 @@ class SnowflakeConnection:
         except snowflake.connector.errors.DatabaseError as e:
             if 'Incorrect username or password was specified' in str(e):
                 raise SymonException('The username or password provided is incorrect. Please check and try again.', 'snowflake.SnowflakeClientError')
-            raise
-        except snowflake.connector.errors.ForbiddenError as e:
-            if 'Failed to connect to DB. Verify the account name is correct' in str(e):
+            if  'Verify the account name is correct' in str(e):
                 raise SymonException("Sorry, we couldn't connect to the database. Please check the Snowflake URL and try again.", "snowflake.SnowflakeClientError")
             raise
 
@@ -228,12 +226,17 @@ class SnowflakeConnection:
 
                     qid = cur.sfqid
 
-                    # Raise exception if returned rows greater than max allowed records
-                    if 0 < max_records < cur.rowcount:
+                    # rowcount is -1 when the row count is unknown, sometimes None need to handle both
+                    rowcount = cur.rowcount if cur.rowcount is not None else -1
+                    if rowcount == -1:
+                        raise SymonException("Snowflake encountered an error while transferring data. Check that your Snowflake table isn't too large.", 'snowflake.SnowflakeClientError')
+
+                    # Raise exception if returned rows greater than max allowed records, would now fail on bad metadata too
+                    if 0 < max_records < rowcount:
                         raise TooManyRecordsException(
                             f'Query returned too many records. This query can return max {max_records} records')
 
-                    if cur.rowcount > 0:
+                    if rowcount > 0:
                         result = cur.fetchall()
 
         return result

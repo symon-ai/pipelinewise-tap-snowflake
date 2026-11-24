@@ -228,6 +228,8 @@ class SnowflakeConnection:
 
                     # rowcount is -1 when the row count is unknown, sometimes None need to handle both
                     rowcount = cur.rowcount if cur.rowcount is not None else -1
+                    if rowcount == -1:
+                        raise SymonException("Snowflake encountered an error while transferring data. Check that your Snowflake table isn't too large.", 'snowflake.SnowflakeClientError')
 
                     # Raise exception if returned rows greater than max allowed records, would now fail on bad metadata too
                     if 0 < max_records < rowcount:

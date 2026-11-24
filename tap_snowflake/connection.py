@@ -20,8 +20,7 @@ class TooManyRecordsException(Exception):
 def is_invalid_account_error(error: Exception) -> bool:
     """Check if a connection error is caused by an invalid Snowflake account name"""
     message = str(error)
-    return ('Verify the account name is correct' in message
-            or ('Failed to login' in message and '404 Not Found' in message))
+    return ('Verify the account name is correct' in message)
 
 
 def retry_pattern():
@@ -233,21 +232,16 @@ class SnowflakeConnection:
 
                     qid = cur.sfqid
 
-                    # rowcount is -1 when the row count is unknown
+                    # rowcount is -1 when the row count is unknown, sometimes None need to handle both
                     rowcount = cur.rowcount if cur.rowcount is not None else -1
                     rowcount_unknown = rowcount < 0
 
-                    # Raise exception if returned rows greater than max allowed records
+                    # Raise exception if returned rows greater than max allowed records, would now fail on bad metadata too
                     if 0 < max_records < rowcount:
                         raise TooManyRecordsException(
                             f'Query returned too many records. This query can return max {max_records} records')
 
-                    if rowcount_unknown and max_records > 0:
-                        result = cur.fetchmany(max_records + 1)
-                        if len(result) > max_records:
-                            raise TooManyRecordsException(
-                                f'Query returned too many records. This query can return max {max_records} records')
-                    elif rowcount_unknown or rowcount > 0:
+                    if rowcount > 0:
                         result = cur.fetchall()
 
         return result

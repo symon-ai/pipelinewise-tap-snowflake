@@ -24,7 +24,6 @@ LOGGER = singer.get_logger()
 # RESULT_BATCH_FILENAME = 'snowflake_result_batches'
 # RESULT_BATCH_METADATA_FILENAME = 'snowflake_result_batches_metadata.json'
 
-
 def escape(string):
     """Escape strings to be SQL safe"""
     if '"' in string:
